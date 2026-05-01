@@ -1,0 +1,14 @@
+# REDMYTHOS CLAW 🦀 Dependencies
+# Install with: pip install -r requirements.txt --break-system-packages
+
+# Core AI
+google-generativeai>=0.7.0
+
+# Terminal UI
+rich>=13.0.0
+
+# HTTP requests
+requests>=2.31.0
+
+# Environment variables
+python-dotenv>=1.0.0
