@@ -17,6 +17,7 @@ echo "██║   ██║██║     ██╔══██║╚════
 echo "╚██████╔╝███████╗██║  ██║███████║███████║╚███╔███╔╝██║██║ ╚████║╚██████╔╝"
 echo " ╚═════╝ ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝ ╚═════╝ "
 echo -e "${WHITE}REDMYTHOS CLAW 🦀 Installer${NC}"
+echo -e "${DIM}Refined by Mir mahmood khan${NC}"
 echo ""
 
 echo -e "${DIM}[1/5] Updating packages...${NC}"
@@ -35,7 +36,7 @@ echo -e "${DIM}[5/5] Making executable...${NC}"
 chmod +x main.py
 
 # Create launcher script
-cat > ~/.local/bin/redmythos << 'EOF'
+cat > ~/.local/bin/redmythosclaw << 'EOF'
 #!/bin/bash
 REDMYTHOS_DIR="$HOME/redmythos-claw"
 if [ -d "$REDMYTHOS_DIR" ]; then
@@ -47,7 +48,8 @@ fi
 EOF
 
 mkdir -p ~/.local/bin
-chmod +x ~/.local/bin/redmythos 2>/dev/null || true
+chmod +x ~/.local/bin/redmythosclaw 2>/dev/null || true
+
 
 
 echo ""

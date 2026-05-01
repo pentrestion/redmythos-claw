@@ -58,19 +58,20 @@ BANNER = """
 [red]                         ██╔════╝██║     ██╔══██╗██║    ██║[/red]
 [red]                         ██║     ██║     ███████║██║ █╗ ██║[/red]
 [red]                         ██║     ██║     ██╔══██║██║███╗██║[/red]
-[red]                         ╚██████╗███████╗██║  ██║╚███╔███╔╝[/red]
-[red]                          ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝[/red]
+[red]╚██████╗███████╗██║  ██║╚███╔███╔╝[/red]
+[red] ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝[/red]
 """
 
 def show_banner():
     console.clear()
     console.print(BANNER)
     console.print(Panel(
-        "[white]v1.0.0 | Powered by Gemini | Open Source MIT[/white]\n"
-        "[dim]Your Personal AI Agent — Drop .md files to customize![/dim]",
+        "[white]v1.1.0 | Built by Mir mahmood khan | Open Source MIT[/white]\n"
+        "[dim]Your Personal AI Agent — High Autonomy & Agentic State![/dim]",
         border_style="red",
         padding=(0, 2)
     ))
+
 
 def show_help():
     help_text = """

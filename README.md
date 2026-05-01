@@ -1,216 +1,90 @@
 # REDMYTHOS CLAW 🦀
 
-> The Autonomous AI Agent Framework for Termux | Refined by Gemini CLI
+> **The Ultimate Autonomous AI Agent for Termux** | Powered by Google Gemini
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://python.org)
-[![Agentic](https://img.shields.io/badge/Agent-Autonomous-red.svg)](https://redmythos.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](LICENSE)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-red.svg)](https://python.org)
+[![Termux](https://img.shields.io/badge/Termux-Optimized-black.svg)](https://termux.dev)
 
----
-
-## Evolution: From RedMythos to REDMYTHOS
-
-REDMYTHOS CLAW is a high-autonomy agent framework inspired by **Claude Code** and **Gemini CLI**. It doesn't just chat—it **thinks, plans, and executes** across your terminal.
-
-### 🌟 New Agentic Features
-- **Dynamic Tool Loading:** Add any `.py` file to `tools/` and it becomes a tool instantly.
-- **Persistent Task Tracking:** The agent maintains a "Task List" and "Completed Tasks" across its loop.
-- **RedMythos Reasoning:** Follows a strict `RESEARCH → STRATEGY → PLAN → ACT → VALIDATE` lifecycle.
-- **Skills System:** Drop `.md` files in `skills/` to give the agent new expertise.
+**REDMYTHOS CLAW** is a powerful, agentic AI framework built specifically for **Termux on Android**. Inspired by **Claude Code**, it brings high-level automation, software engineering, and security research capabilities to your mobile device for FREE using the Gemini API.
 
 ---
 
-## How It Works
-
-```
-You give a task
-      ↓
-Agent RESEARCHES (Scans codebase/environment)
-      ↓
-Agent STRATEGIZES (Builds a task list)
-      ↓
-Agent PLANS (Decides next 3 steps)
-      ↓  
-Agent ACTS (Uses dynamic tools autonomously)
-      ↓
-Agent VALIDATES (Verifies behavioral correctness)
-      ↓
-Agent REPEATS until all tasks are COMPLETED ✅
-```
+## 🔍 SEO & Key Features
+- **Termux AI Agent:** Run a full-scale AI agent in your Termux environment.
+- **Autonomous Reasoning:** Follows a strict `RESEARCH → STRATEGY → PLAN → ACT → VALIDATE` lifecycle.
+- **Gemini AI Termux:** Optimized for Gemini 1.5 Flash (Free Tier).
+- **Claude Code for Android:** A mobile-first alternative for autonomous coding and system tasks.
+- **Dynamic Extensibility:** Add custom tools (.py) and skills (.md) instantly.
+- **Security Research:** Built-in modes for offensive security and bug bounty hunting.
 
 ---
 
-## Adding Your Own "Stuffs"
+## 🚀 How It Works
 
-### 🛠️ Add New Tools
-Simply drop a Python file in `tools/`. Ensure it has an `execute()` method:
+REDMYTHOS CLAW doesn't just chat; it **acts**. It uses a persistent task list to manage complex goals:
 
-```python
-class MyCustomTool:
-    """Description for the AI."""
-    def execute(self, arg1, arg2):
-        # Your logic here
-        return "Result for the agent"
-```
-
-### 🧠 Add New Skills
-Drop an `.md` file in `skills/`. The agent will use this knowledge when needed.
-
-### 🎭 Add New Modes
-Drop an `.md` file in `modes/` (e.g., `security_researcher.md`).
+1. **RESEARCH:** Scans your files, terminal environment, and web sources.
+2. **STRATEGY:** Generates a comprehensive task list to achieve your goal.
+3. **PLAN:** Breaks down the immediate next steps with validation criteria.
+4. **ACT:** Executes tools (Shell, File, Web, Search) autonomously.
+5. **VALIDATE:** Checks every result to ensure the task was completed correctly.
 
 ---
 
-## Quick Install
+## 🛠️ Installation (Termux)
+
+Copy and paste these commands to get started:
 
 ```bash
-git clone https://github.com/yourusername/redmythos-claw
+# Clone the repository
+git clone https://github.com/pentrestion/redmythos-claw
+
+# Enter directory
 cd redmythos-claw
+
+# Run the automated installer
 bash install.sh
-python3 main.py
-```
 
-
----
-
-## Customization (The Magic Part 🪄)
-
-### Add Custom Modes
-Just drop a `.md` file in `~/.redmythos/modes/`:
-
-```markdown
-# My Custom Mode
-
-## Description
-My specialized mode for X
-
-## Role
-You are an expert in...
-
-## Tools
-- file_tool: enabled
-- shell_tool: enabled
-- web_tool: disabled
-
-## Safety
-confirm: dangerous_only
-
-## Format
-Always respond with...
-```
-
-Then use it:
-```
-/mode my_custom_mode
-```
-
-**That's it. No coding needed!**
-
----
-
-### Add MCP Servers
-Edit `~/.redmythos/mcp/servers.json`:
-
-```json
-{
-  "servers": [
-    {
-      "name": "my-server",
-      "type": "http",
-      "url": "http://localhost:3000/mcp",
-      "enabled": true
-    }
-  ]
-}
+# Start the agent from anywhere
+redmythosclaw
 ```
 
 ---
 
-### Add Extensions
-Drop a folder in `~/.redmythos/extensions/my-extension/`:
+## 🧩 Customization
 
-```
-my-extension/
-├── extension.md    # Config (same .md format!)
-├── main.py         # Extension code
-└── README.md
-```
+### Add New Tools
+Drop any Python file in `tools/`. Ensure it has an `execute()` method. The agent will discover it automatically.
 
----
+### Add New Skills
+Drop Markdown files in `skills/` to provide the agent with specialized documentation or procedures.
 
-## Built-In Modes
-
-| Mode | Description |
-|------|-------------|
-| `default` | General purpose assistant |
-| `active_mode` | Security research + bug bounty |
-| `building_mode` | Full-stack development |
-| `new_mode` | SaaS architecture |
+### MCP Support
+Fully compatible with **Model Context Protocol (MCP)** servers for infinite tool expansion.
 
 ---
 
-## Commands
+## 📜 Commands
 
-| Command | What It Does |
+| Command | Description |
 |---------|-------------|
-| `/mode <name>` | Switch mode |
-| `/modes` | List all modes |
-| `/mcp` | Show MCP servers |
-| `/mcp connect <name>` | Connect to MCP server |
-| `/extensions` | List extensions |
-| `/memory` | Show memory |
-| `/memory clear` | Clear memory |
-| `/clear` | Clear screen |
-| `/help` | Show help |
-| `/exit` | Exit |
+| `/mode <name>` | Switch agent persona (e.g., gemini_cli, active_mode) |
+| `/modes` | List all available personas |
+| `/mcp` | Manage MCP server connections |
+| `/memory clear` | Reset session memory |
+| `/help` | Show full command list |
+| `/exit` | Shut down the agent |
 
 ---
 
-## Configuration
-
-Edit `~/.redmythos/config.json`:
-
-```json
-{
-  "gemini_api_key": "your_key_here",
-  "default_mode": "default",
-  "max_iterations": 10,
-  "auto_save_memory": true
-}
-```
-
-Get free Gemini API key: https://aistudio.google.com/apikey
+## ⚠️ Security
+REDMYTHOS CLAW has built-in safety modes. By default, it asks for confirmation before executing "dangerous" commands (like `rm` or `shell`). You can customize this in your mode files.
 
 ---
 
-## File Structure
+## 📄 License
+MIT — Open Source and Free Forever.
 
-```
-~/.redmythos/              # Your config home
-├── config.json            # Main config
-├── modes/                 # Your .md mode files
-│   ├── default.md
-│   ├── active_mode.md
-│   ├── building_mode.md
-│   └── your_custom.md     # Drop any .md here!
-├── extensions/            # Extensions
-│   └── my-extension/
-├── mcp/
-│   └── servers.json       # MCP servers
-├── memory/                # Session memory
-└── logs/                  # Logs
-```
-
----
-
-## License
-
-MIT — Free to use, modify, share, sell.
-
----
-
-## Credits
-
-Built by khan77319 🦀
-Powered by Google Gemini
-Inspired by Claude Code
+**Built for the community by Mir mahmood khan 🦀**
+**Keywords:** Termux AI, Android Agent, Gemini API, Autonomous Agent, Claude Code, RedMythos Claw, Mobile Hacking, AI Automation.
