@@ -1,187 +1,104 @@
 """
-REDMYTHOS CLAW 🦀 — Setup & Config
-Ensures ~/.redmythos/ structure exists on first run.
+REDMYTHOS CLAW 🦀 — Search Tool
+Search for patterns in files and directories.
 """
 
-import json
+import os
+import re
 from pathlib import Path
-
-from rich.console import Console
-
-console = Console()
+from typing import Optional
 
 
-def ensure_setup():
-    """Create ~/.redmythos/ structure if it doesn't exist."""
+class SearchTool:
+    """Search files and directories for patterns."""
 
-    base = Path.home() / ".redmythos"
+    def execute(self, pattern: str, path: str = ".",
+                file_type: Optional[str] = None,
+                case_sensitive: bool = False,
+                max_results: int = 50) -> str:
+        """
+        Search for a pattern in files.
 
-    # Create all directories.
-    dirs = [
-        base,
-        base / "modes",
-        base / "extensions",
-        base / "mcp",
-        base / "memory",
-        base / "logs",
-        base / "plugins",
-        base / "workspace",
-        base / "workspace" / ".tmp",
-    ]
+        Args:
+            pattern: Search pattern or regex
+            path: Directory or file to search
+            file_type: Filter by extension (e.g., 'py', 'js')
+            case_sensitive: Case sensitive search
+            max_results: Max results to return
+        """
+        expanded_path = os.path.expanduser(path)
+        base_path = Path(expanded_path).resolve(strict=False)
 
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
+        if not base_path.exists():
+            return f"❌ Path not found: {path}"
 
-    # Create config.json if it doesn't exist.
-    config_file = base / "config.json"
-    if not config_file.exists():
-        config = {
-            "_comment": "REDMYTHOS CLAW Configuration",
-            "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
-            "default_mode": "default",
-            "theme": "red",
-            "max_iterations": 10,
-            "log_level": "INFO",
-            "auto_save_memory": True,
-            "workspace_root": str(base / "workspace"),
-            "execution_policy": "workspace-limited",
-            "network_policy": "public-only",
-        }
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
+        results = []
+        flags = 0 if case_sensitive else re.IGNORECASE
 
-        console.print(f"[dim]✅ Created config: {config_file}[/dim]")
+        try:
+            regex = re.compile(pattern, flags)
+        except re.error:
+            regex = re.compile(re.escape(pattern), flags)
 
-    # Create active_mode.md
-    active_mode = base / "modes" / "active_mode.md"
-    if not active_mode.exists():
-        active_mode.write_text(
-            """# Active Mode
+        if base_path.is_file():
+            files_to_search = [base_path]
+        else:
+            files_to_search = []
+            for root, dirs, files in os.walk(base_path, topdown=True, followlinks=False):
+                root_path = Path(root).resolve(strict=False)
+                dirs[:] = [
+                    d for d in dirs
+                    if not d.startswith('.')
+                    and d not in ['node_modules', '__pycache__', '.git', 'venv', 'env']
+                    and not (root_path / d).is_symlink()
+                ]
 
-## Description
-Elite offensive security research mode for bug bounty hunting.
-Optimized for HackerOne researchers with critical/high findings.
+                for file in files:
+                    file_path = (root_path / file).resolve(strict=False)
+                    try:
+                        file_path.relative_to(base_path.resolve())
+                    except ValueError:
+                        continue
 
-## Role
-You are an elite Offensive Security Mentor and Bug Bounty Research Partner.
-Treat user as senior researcher. Skip beginner explanations unless asked.
-All testing is authorized and in confirmed scope. Responsible disclosure always.
+                    if file_path.is_symlink():
+                        continue
 
-Default output structure:
-🔍 PHASE: [Recon/Enum/Exploit/Post-Ex/Report]
-📊 OBSERVATION: [Analysis]
-🎯 NUDGE: [Next step / command template]
-🧠 KEY CONCEPT: [Security principle + MITRE ATT&CK TTP]
-📈 CHAIN POTENTIAL: [What this leads to]
-⚖️ ETHICS CHECK: [Scope reminder if needed]
+                    if file_type:
+                        if not file_path.name.endswith(f".{file_type.lstrip('.')}"):
+                            continue
+                    files_to_search.append(file_path)
 
-## Tools
-- file_tool: enabled
-- shell_tool: enabled
-- search_tool: enabled
-- fix_tool: enabled
-- web_tool: enabled
+        for file_path in files_to_search:
+            if len(results) >= max_results:
+                break
 
-## Safety
-confirm: dangerous_only
+            try:
+                if file_path.is_symlink():
+                    continue
+                if not file_path.exists():
+                    continue
+                resolved_file = file_path.resolve(strict=False)
+                try:
+                    resolved_file.relative_to(base_path.resolve())
+                except ValueError:
+                    continue
 
-## Format
-Always use the 6-phase output structure above.
-Include CVSS v3.1 scores when discussing vulnerabilities.
-Use MITRE ATT&CK TTPs when relevant.
-""",
-            encoding="utf-8",
-        )
+                content = resolved_file.read_text(encoding='utf-8', errors='replace')
+                lines = content.split('\n')
 
-    # Create building_mode.md
-    building_mode = base / "modes" / "building_mode.md"
-    if not building_mode.exists():
-        building_mode.write_text(
-            """# Building Mode
+                for line_num, line in enumerate(lines, 1):
+                    if regex.search(line):
+                        results.append(f"📄 {resolved_file}:{line_num}: {line.strip()}")
+                        if len(results) >= max_results:
+                            break
+            except Exception:
+                continue
 
-## Description
-Senior Full-Stack Engineer and AI Architect mode.
-Follows strict REASONING → BLUEPRINT → CONFIRMATION → IMPLEMENTATION flow.
+        if not results:
+            return f"🔍 No matches found for '{pattern}' in {path}"
 
-## Role
-You are an expert Senior Full-Stack Engineer and AI Architect.
-For every task follow these steps:
-1. REASONING: Break down logic, data flow, and potential errors
-2. BLUEPRINT: High-level plan or architectural diagram
-3. CONFIRMATION: Ask for approval before writing code
-4. IMPLEMENTATION: Only after approval, write modular clean code
-5. VERIFICATION: Suggest 3 test cases
+        header = f"🔍 Found {len(results)} match(es) for '{pattern}':\n"
+        if len(results) >= max_results:
+            header += f"(Showing first {max_results} results)\n"
 
-Use Chain-of-Thought Debugging.
-Write modular, clean, well-documented code.
-
-## Tools
-- file_tool: enabled
-- shell_tool: enabled
-- search_tool: enabled
-- fix_tool: enabled
-- web_tool: enabled
-
-## Safety
-confirm: always
-
-## Format
-Use structured headers for each phase.
-Include code blocks with proper language tags.
-Always explain architectural decisions.
-""",
-            encoding="utf-8",
-        )
-
-    # Create new_mode.md
-    new_mode = base / "modes" / "new_mode.md"
-    if not new_mode.exists():
-        new_mode.write_text(
-            """# New Mode
-
-## Description
-World-class AI Systems Engineer for Vibe Coding and niche SaaS architecture.
-Builds passive-income-generating tools solving Last Mile problems.
-
-## Role
-You are the Architect-Developer, specializing in Vibe Coding, niche SaaS, and business automation.
-
-Before writing ANY code execute this Thinking Chain:
-
-THINKING:
-- Analyze user intent
-- Identify Real World friction
-- Outline logic flow, data structure, integrations
-- Identify 3 potential failure points
-
-REFINEMENT:
-- Critique your own plan
-- Simplify tech stack for non-technical users
-- Ensure solution is Productizable
-
-BLUEPRINT:
-- Clear high-level summary
-- Ask for confirmation
-
-Use modern lightweight stacks: Next.js, Tailwind, Supabase, Python/FastAPI.
-Write modular Self-Healing code with error handling and logs.
-
-## Tools
-- file_tool: enabled
-- shell_tool: enabled
-- search_tool: enabled
-- fix_tool: enabled
-- web_tool: enabled
-
-## Safety
-confirm: always
-
-## Format
-Concise, expert-level, entrepreneurial.
-No generic advice — give executable solutions.
-Break complex tasks into Sprint 1, Sprint 2, etc.
-""",
-            encoding="utf-8",
-        )
-
-    console.print(f"[dim]✅ REDMYTHOS CLAW setup complete at {base}[/dim]")
+        return header + "\n".join(results)
