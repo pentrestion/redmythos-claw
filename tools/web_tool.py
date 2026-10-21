@@ -1,82 +1,181 @@
 """
-REDMYTHOS CLAW 🦀 — Web Tool
-Fetch and summarize content from URLs.
+REDMYTHOS CLAW 🦀 — File Tool
+Read, write, edit, delete, list files.
+Operations are restricted to the current working directory and the user's home directory.
 """
 
-import requests
-from bs4 import BeautifulSoup
-from typing import Optional
+import os
+import shutil
+from pathlib import Path
 
-class WebTool:
-    """Tool for fetching and processing web content."""
 
-    def execute(self, action: str, url: str, 
-                selector: Optional[str] = None) -> str:
+class FileTool:
+    """File system operations tool."""
+
+    SAFE_ROOTS = [Path.cwd().resolve(), Path.home().resolve()]
+
+    def execute(self, action: str, path: str,
+                content: str = "", encoding: str = "utf-8") -> str:
         """
-        Execute a web operation.
-        
+        Execute a file operation.
+
         Args:
-            action: fetch/extract/headers
-            url: Target URL
-            selector: CSS selector for extraction
-            
+            action: read/write/edit/delete/list/exists/mkdir
+            path: File or directory path
+            content: Content for write/edit actions
+            encoding: File encoding
+
         Returns:
-            Fetched content or summary
+            Result string
         """
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
+        try:
+            safe_path = self._resolve_allowed_path(path)
+        except ValueError as exc:
+            return f"❌ Security restriction: {exc}"
 
         try:
-            if action == "fetch":
-                return self._fetch(url)
-            elif action == "extract":
-                return self._extract(url, selector)
-            elif action == "headers":
-                return self._headers(url)
+            if action == "read":
+                return self._read(safe_path, encoding)
+            elif action == "write":
+                return self._write(safe_path, content, encoding)
+            elif action == "edit":
+                return self._edit(safe_path, content, encoding)
+            elif action == "delete":
+                return self._delete(safe_path)
+            elif action == "list":
+                return self._list(safe_path)
+            elif action == "exists":
+                return str(Path(safe_path).exists())
+            elif action == "mkdir":
+                return self._mkdir(safe_path)
+            elif action == "copy":
+                return self._copy(safe_path, content)
+            elif action == "move":
+                return self._move(safe_path, content)
             else:
-                return f"❌ Unknown action: {action}. Use: fetch/extract/headers"
-        except Exception as e:
-            return f"❌ Web tool error: {e}"
+                return f"❌ Unknown action: {action}. Use: read/write/edit/delete/list/exists/mkdir"
+        except PermissionError:
+            return f"❌ Permission denied: {safe_path}"
+        except Exception as exc:
+            return f"❌ File operation error: {exc}"
 
-    def _fetch(self, url: str) -> str:
-        """Fetch URL and return text content."""
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Remove script and style elements
-        for script in soup(["script", "style"]):
-            script.decompose()
+    def _resolve_allowed_path(self, path: str) -> str:
+        """Resolve a path and confirm it stays inside a safe root directory."""
+        expanded = os.path.expandvars(os.path.expanduser(path))
+        candidate = Path(expanded)
 
-        text = soup.get_text(separator='\n')
-        
-        # Clean up whitespace
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = '\n'.join(chunk for chunk in chunks if chunk)
+        if not candidate.is_absolute():
+            candidate = (Path.cwd() / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
 
-        return f"🌐 CONTENT FROM {url}:\n\n{text[:5000]}..."
+        for root in self.SAFE_ROOTS:
+            try:
+                candidate.relative_to(root)
+                return str(candidate)
+            except ValueError:
+                continue
 
-    def _extract(self, url: str, selector: str) -> str:
-        """Extract specific elements using CSS selector."""
-        if not selector:
-            return "❌ Selector required for extract action."
-            
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        elements = soup.select(selector)
-        
-        if not elements:
-            return f"🔍 No elements found for selector: {selector}"
-            
-        results = [el.get_text().strip() for el in elements]
-        return f"🔍 EXTRACTED ({selector}):\n\n" + "\n---\n".join(results[:20])
+        raise ValueError(f"'{path}' is outside the allowed sandbox: {', '.join(str(root) for root in self.SAFE_ROOTS)}")
 
-    def _headers(self, url: str) -> str:
-        """Get HTTP headers for a URL."""
-        response = requests.head(url, timeout=10)
-        headers = "\n".join([f"{k}: {v}" for k, v in response.headers.items()])
-        return f"📋 HEADERS FOR {url}:\n\n{headers}"
+    def _read(self, path: str, encoding: str) -> str:
+        """Read file contents."""
+        p = Path(path)
+        if not p.exists():
+            return f"❌ File not found: {path}"
+        if p.is_dir():
+            return f"❌ '{path}' is a directory. Use action='list'"
+
+        size = p.stat().st_size
+        if size > 1_000_000:
+            return f"⚠️ File is large ({size/1024:.1f}KB). Reading first 10000 chars only.\n\n" + p.read_text(encoding=encoding, errors='replace')[:10000]
+
+        content = p.read_text(encoding=encoding, errors='replace')
+        lines = content.count('\n')
+        return f"📄 {path} ({lines} lines, {size} bytes):\n\n{content}"
+
+    def _write(self, path: str, content: str, encoding: str) -> str:
+        """Write content to file (creates if not exists)."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        existed = p.exists()
+        p.write_text(content, encoding=encoding)
+        action = "Updated" if existed else "Created"
+        return f"✅ {action}: {path} ({len(content)} chars)"
+
+    def _edit(self, path: str, content: str, encoding: str) -> str:
+        """Edit/append to existing file."""
+        p = Path(path)
+        if not p.exists():
+            return self._write(path, content, encoding)
+
+        existing = p.read_text(encoding=encoding, errors='replace')
+        p.write_text(existing + "\n" + content, encoding=encoding)
+        return f"✅ Edited: {path}"
+
+    def _delete(self, path: str) -> str:
+        """Delete file or directory."""
+        p = Path(path)
+        if not p.exists():
+            return f"❌ Not found: {path}"
+
+        if p.is_file():
+            p.unlink()
+            return f"✅ Deleted file: {path}"
+        if p.is_dir():
+            shutil.rmtree(path)
+            return f"✅ Deleted directory: {path}"
+        return f"❌ Unsupported object type: {path}"
+
+    def _list(self, path: str) -> str:
+        """List directory contents."""
+        p = Path(path) if path else Path.cwd()
+
+        if not p.exists():
+            return f"❌ Directory not found: {path}"
+        if not p.is_dir():
+            return f"❌ '{path}' is a file, not a directory"
+
+        items = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
+        if not items:
+            return f"📁 {path} (empty)"
+
+        result = [f"📁 {p.absolute()}:"]
+        for item in items[:100]:
+            if item.is_dir():
+                result.append(f"  📂 {item.name}/")
+            else:
+                size = item.stat().st_size
+                size_str = f"{size}B" if size < 1024 else f"{size//1024}KB"
+                result.append(f"  📄 {item.name} ({size_str})")
+
+        if len(items) > 100:
+            result.append(f"  ... and {len(items)-100} more items")
+
+        return "\n".join(result)
+
+    def _mkdir(self, path: str) -> str:
+        """Create directory."""
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return f"✅ Created directory: {path}"
+
+    def _copy(self, src: str, dst: str) -> str:
+        """Copy file or directory."""
+        src_path = Path(src)
+        dst_path = Path(dst)
+        if dst_path.is_absolute() and not self._resolve_allowed_path(str(dst_path)):
+            return "❌ Destination outside sandbox."
+        if src_path.is_dir():
+            shutil.copytree(src_path, dst_path)
+        else:
+            shutil.copy2(src_path, dst_path)
+        return f"✅ Copied: {src} → {dst}"
+
+    def _move(self, src: str, dst: str) -> str:
+        """Move file or directory."""
+        src_path = Path(src)
+        dst_path = Path(dst)
+        if dst_path.is_absolute() and not self._resolve_allowed_path(str(dst_path)):
+            return "❌ Destination outside sandbox."
+        shutil.move(src_path, dst_path)
+        return f"✅ Moved: {src} → {dst}"

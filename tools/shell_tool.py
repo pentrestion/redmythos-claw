@@ -1,142 +1,104 @@
 """
-REDMYTHOS CLAW 🦀 — Shell Tool
-Execute terminal commands safely in Termux.
-Always confirms before execution (safety: always mode).
+REDMYTHOS CLAW 🦀 — Search Tool
+Search for patterns in files and directories.
 """
 
-import subprocess
-import shlex
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
-class ShellTool:
-    """Safe shell command execution tool."""
 
-    # Commands that are always blocked (safety)
-    BLOCKED_COMMANDS = [
-        "rm -rf /",
-        "rm -rf /*", 
-        "mkfs",
-        "dd if=/dev/zero",
-        ":(){:|:&};:",  # Fork bomb
-    ]
+class SearchTool:
+    """Search files and directories for patterns."""
 
-    def execute(self, command: str, timeout: int = 30,
-                cwd: Optional[str] = None, 
-                env: Optional[dict] = None) -> str:
+    def execute(self, pattern: str, path: str = ".",
+                file_type: Optional[str] = None,
+                case_sensitive: bool = False,
+                max_results: int = 50) -> str:
         """
-        Execute a shell command.
-        
+        Search for a pattern in files.
+
         Args:
-            command: Shell command to execute
-            timeout: Timeout in seconds
-            cwd: Working directory
-            env: Environment variables
-            
-        Returns:
-            Command output (stdout + stderr)
+            pattern: Search pattern or regex
+            path: Directory or file to search
+            file_type: Filter by extension (e.g., 'py', 'js')
+            case_sensitive: Case sensitive search
+            max_results: Max results to return
         """
-        # Safety check
-        for blocked in self.BLOCKED_COMMANDS:
-            if blocked in command:
-                return f"❌ BLOCKED: Dangerous command detected: {blocked}"
+        expanded_path = os.path.expanduser(path)
+        base_path = Path(expanded_path).resolve(strict=False)
 
-        # Expand home directory in cwd
-        if cwd:
-            cwd = os.path.expanduser(cwd)
+        if not base_path.exists():
+            return f"❌ Path not found: {path}"
+
+        results = []
+        flags = 0 if case_sensitive else re.IGNORECASE
 
         try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=cwd,
-                env={**os.environ, **(env or {})},
-                errors='replace'
-            )
+            regex = re.compile(pattern, flags)
+        except re.error:
+            regex = re.compile(re.escape(pattern), flags)
 
-            output = []
-            
-            # Add stdout
-            if result.stdout.strip():
-                output.append(result.stdout.strip())
-            
-            # Add stderr
-            if result.stderr.strip():
-                output.append(f"STDERR:\n{result.stderr.strip()}")
-            
-            # Add return code if non-zero
-            if result.returncode != 0:
-                output.append(f"Exit code: {result.returncode}")
+        if base_path.is_file():
+            files_to_search = [base_path]
+        else:
+            files_to_search = []
+            for root, dirs, files in os.walk(base_path, topdown=True, followlinks=False):
+                root_path = Path(root).resolve(strict=False)
+                dirs[:] = [
+                    d for d in dirs
+                    if not d.startswith('.')
+                    and d not in ['node_modules', '__pycache__', '.git', 'venv', 'env']
+                    and not (root_path / d).is_symlink()
+                ]
 
-            if not output:
-                return f"✅ Command completed (exit code: {result.returncode})"
-            
-            return "\n".join(output)
+                for file in files:
+                    file_path = (root_path / file).resolve(strict=False)
+                    try:
+                        file_path.relative_to(base_path.resolve())
+                    except ValueError:
+                        continue
 
-        except subprocess.TimeoutExpired:
-            return f"⏰ Command timed out after {timeout}s: {command}"
-        except FileNotFoundError as e:
-            return f"❌ Command not found: {e}"
-        except Exception as e:
-            return f"❌ Shell error: {e}"
+                    if file_path.is_symlink():
+                        continue
 
-    def run_script(self, script_content: str, 
-                   language: str = "bash",
-                   timeout: int = 60) -> str:
-        """
-        Run a script by writing to temp file and executing.
-        
-        Args:
-            script_content: Script code
-            language: bash/python/node/ruby/go/rust
-            timeout: Timeout in seconds
-        """
-        import tempfile
-        
-        extensions = {
-            "bash": ".sh",
-            "python": ".py",
-            "python3": ".py",
-            "node": ".js",
-            "javascript": ".js",
-            "ruby": ".rb",
-            "perl": ".pl",
-            "php": ".php"
-        }
-        
-        interpreters = {
-            "bash": "bash",
-            "python": "python3",
-            "python3": "python3",
-            "node": "node",
-            "javascript": "node",
-            "ruby": "ruby",
-            "perl": "perl",
-            "php": "php"
-        }
-        
-        ext = extensions.get(language.lower(), ".sh")
-        interpreter = interpreters.get(language.lower(), language)
-        
-        with tempfile.NamedTemporaryFile(
-            mode='w', 
-            suffix=ext, 
-            delete=False,
-            prefix="redmythos_"
-        ) as f:
-            f.write(script_content)
-            temp_path = f.name
-        
-        try:
-            result = self.execute(
-                f"{interpreter} {temp_path}",
-                timeout=timeout
-            )
-        finally:
-            Path(temp_path).unlink(missing_ok=True)
-        
-        return result
+                    if file_type:
+                        if not file_path.name.endswith(f".{file_type.lstrip('.')}"):
+                            continue
+                    files_to_search.append(file_path)
+
+        for file_path in files_to_search:
+            if len(results) >= max_results:
+                break
+
+            try:
+                if file_path.is_symlink():
+                    continue
+                if not file_path.exists():
+                    continue
+                resolved_file = file_path.resolve(strict=False)
+                try:
+                    resolved_file.relative_to(base_path.resolve())
+                except ValueError:
+                    continue
+
+                content = resolved_file.read_text(encoding='utf-8', errors='replace')
+                lines = content.split('\n')
+
+                for line_num, line in enumerate(lines, 1):
+                    if regex.search(line):
+                        results.append(f"📄 {resolved_file}:{line_num}: {line.strip()}")
+                        if len(results) >= max_results:
+                            break
+            except Exception:
+                continue
+
+        if not results:
+            return f"🔍 No matches found for '{pattern}' in {path}"
+
+        header = f"🔍 Found {len(results)} match(es) for '{pattern}':\n"
+        if len(results) >= max_results:
+            header += f"(Showing first {max_results} results)\n"
+
+        return header + "\n".join(results)

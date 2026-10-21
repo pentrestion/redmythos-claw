@@ -1,74 +1,165 @@
-#!/bin/bash
-# REDMYTHOS CLAW 🦀 — One Command Installer for Termux
-# Run: bash install.sh
+"""
+REDMYTHOS CLAW 🦀 — Gemini API Client
+Handles all Gemini API calls with structured agentic reasoning.
+"""
 
-set -e
+import json
+import os
+import time
+from pathlib import Path
+from typing import Dict, List
 
-RED='\033[0;31m'
-WHITE='\033[1;37m'
-DIM='\033[2m'
-NC='\033[0m' # No Color
+import google.generativeai as genai
+from rich.console import Console
 
-echo -e "${RED}"
-echo " ██████╗ ██╗      █████╗ ███████╗███████╗██╗    ██╗██╗███╗   ██╗ ██████╗ "
-echo "██╔════╝ ██║     ██╔══██╗██╔════╝██╔════╝██║    ██║██║████╗  ██║██╔════╝ "
-echo "██║  ███╗██║     ███████║███████╗███████╗██║ █╗ ██║██║██╔██╗ ██║██║  ███╗"
-echo "██║   ██║██║     ██╔══██║╚════██║╚════██║██║███╗██║██║██║╚██╗██║██║   ██║"
-echo "╚██████╔╝███████╗██║  ██║███████║███████║╚███╔███╔╝██║██║ ╚████║╚██████╔╝"
-echo " ╚═════╝ ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝ ╚═════╝ "
-echo -e "${WHITE}REDMYTHOS CLAW 🦀 Installer${NC}"
-echo -e "${DIM}Refined by Mir mahmood khan${NC}"
-echo ""
-
-echo -e "${DIM}[1/5] Updating packages...${NC}"
-pkg update -y 2>/dev/null || true
-
-echo -e "${DIM}[2/5] Installing system dependencies...${NC}"
-pkg install -y python python-pip git curl 2>/dev/null || true
-
-echo -e "${DIM}[3/5] Installing Python dependencies...${NC}"
-pip install -r requirements.txt --break-system-packages --quiet
-
-echo -e "${DIM}[4/5] Setting up ~/.redmythos/ structure...${NC}"
-python3 -c "from config.setup import ensure_setup; ensure_setup()"
-
-echo -e "${DIM}[5/5] Making executable...${NC}"
-chmod +x main.py
-
-# Create launcher script
-cat > ~/.local/bin/redmythosclaw << 'EOF'
-#!/bin/bash
-REDMYTHOS_DIR="$HOME/redmythos-claw"
-if [ -d "$REDMYTHOS_DIR" ]; then
-    cd "$REDMYTHOS_DIR"
-    python3 main.py "$@"
-else
-    echo "❌ REDMYTHOS CLAW not found at $REDMYTHOS_DIR"
-fi
-EOF
-
-mkdir -p ~/.local/bin
-chmod +x ~/.local/bin/redmythosclaw 2>/dev/null || true
+console = Console()
 
 
+class GeminiClient:
+    """
+    Gemini API client optimized for REDMYTHOS agentic loop.
+    Model: gemini-1.5-flash
+    """
 
-echo ""
-echo -e "${RED}✅ REDMYTHOS CLAW installed!${NC}"
-echo ""
-echo -e "${WHITE}Next steps:${NC}"
-echo -e "  1. Add your Gemini API key:"
-echo -e "     ${DIM}nano ~/.redmythos/config.json${NC}"
-echo -e "     Get free key: https://aistudio.google.com/apikey"
-echo ""
-echo -e "  2. Start REDMYTHOS CLAW:"
-echo -e "     ${RED}python3 main.py${NC}"
-echo ""
-echo -e "  3. Switch modes:"
-echo -e "     ${DIM}/mode active_mode${NC}"
-echo -e "     ${DIM}/mode building_mode${NC}"
-echo -e "     ${DIM}/mode new_mode${NC}"
-echo ""
-echo -e "  4. Add custom modes:"
-echo -e "     ${DIM}Drop any .md file in ~/.redmythos/modes/${NC}"
-echo ""
-echo -e "${RED}🦀 Happy Hacking!${NC}"
+    MODEL = "gemini-1.5-flash"
+    MAX_RPM = 15
+    MIN_DELAY = 4.0
+
+    def __init__(self):
+        self.api_key = self._load_api_key()
+        if not self.api_key:
+            raise ValueError(
+                "No Gemini API key found. Add GEMINI_API_KEY to the environment or ~/.redmythos/config.json"
+            )
+        genai.configure(api_key=self.api_key)
+        self.model = genai.GenerativeModel(self.MODEL)
+        self.last_request_time = 0
+        self.request_count_today = 0
+        self.conversation_history = []
+
+    def _load_api_key(self) -> str:
+        """Load API key from config or environment."""
+        env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if env_key and env_key != "YOUR_GEMINI_API_KEY_HERE":
+            return env_key
+
+        config_path = Path.home() / ".redmythos" / "config.json"
+        if config_path.exists():
+            try:
+                with open(config_path, "r", encoding="utf-8") as config_file:
+                    config = json.load(config_file)
+                key = str(config.get("gemini_api_key", "")).strip()
+                if key and key != "YOUR_GEMINI_API_KEY_HERE":
+                    return key
+            except (OSError, ValueError, TypeError):
+                return ""
+
+        return ""
+
+    def _rate_limit(self):
+        elapsed = time.time() - self.last_request_time
+        if elapsed < self.MIN_DELAY:
+            time.sleep(self.MIN_DELAY - elapsed)
+        self.last_request_time = time.time()
+
+    def chat_with_tools(self,
+                        message: str,
+                        system_prompt: str,
+                        available_tools: List[Dict]) -> Dict:
+        """
+        Chat with tool use enabled and agentic state tracking.
+        """
+        self._rate_limit()
+
+        tool_descriptions = "\n".join([
+            f"- {t['name']}: {t['description']}"
+            for t in available_tools
+        ])
+
+        agentic_prompt = f"""
+{system_prompt}
+
+You have access to these tools:
+{tool_descriptions}
+
+To use a tool, respond with JSON in this format:
+{{
+  "thought": "your current reasoning/analysis",
+  "plan": "your next 1-3 steps",
+  "new_tasks": ["task 1", "task 2"],
+  "completed_task": "task name from current task list",
+  "action": "tool_name",
+  "action_input": {{tool parameters}},
+  "validation": "how you will verify the result",
+  "final_answer": null
+}}
+
+If you have the final answer (no tool needed):
+{{
+  "thought": "your final reasoning",
+  "plan": null,
+  "new_tasks": [],
+  "completed_task": "the main user task",
+  "action": null,
+  "action_input": null,
+  "validation": null,
+  "final_answer": "your answer here"
+}}
+
+User request: {message}
+"""
+
+        try:
+            response = self.model.generate_content(
+                agentic_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=4096,
+                )
+            )
+
+            response_text = response.text.strip()
+            self.request_count_today += 1
+
+            try:
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0]
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].split("```")[0]
+
+                parsed = json.loads(response_text.strip())
+
+                fields = ["thought", "plan", "new_tasks", "completed_task",
+                          "action", "action_input", "validation", "final_answer"]
+                for field in fields:
+                    if field not in parsed:
+                        parsed[field] = None if field != "new_tasks" else []
+
+                return parsed
+
+            except json.JSONDecodeError:
+                return {
+                    "thought": "Direct response",
+                    "plan": None,
+                    "new_tasks": [],
+                    "completed_task": None,
+                    "action": None,
+                    "action_input": None,
+                    "validation": None,
+                    "final_answer": response_text,
+                }
+
+        except Exception as exc:
+            return {
+                "thought": f"Error: {exc}",
+                "plan": None,
+                "new_tasks": [],
+                "completed_task": None,
+                "action": None,
+                "action_input": None,
+                "validation": None,
+                "final_answer": f"❌ Error: {exc}",
+            }
+
+    def reset_conversation(self):
+        self.conversation_history = []

@@ -1,171 +1,116 @@
 """
-REDMYTHOS CLAW 🦀 — Setup & Config
-Ensures ~/.redmythos/ structure exists on first run.
+REDMYTHOS CLAW 🦀 — Web Tool
+Fetch and summarize content from URLs.
 """
 
-import json
-from pathlib import Path
-from rich.console import Console
+import ipaddress
+from urllib.parse import urlparse
 
-console = Console()
+import requests
+from bs4 import BeautifulSoup
 
-def ensure_setup():
-    """Create ~/.redmythos/ structure if it doesn't exist."""
-    
-    base = Path.home() / ".redmythos"
-    
-    # Create all directories
-    dirs = [
-        base,
-        base / "modes",
-        base / "extensions", 
-        base / "mcp",
-        base / "memory",
-        base / "logs",
-        base / "plugins",
-    ]
-    
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
 
-    # Create config.json if not exists
-    config_file = base / "config.json"
-    if not config_file.exists():
-        config = {
-            "_comment": "REDMYTHOS CLAW Configuration",
-            "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
-            "default_mode": "default",
-            "theme": "red",
-            "max_iterations": 10,
-            "log_level": "INFO",
-            "auto_save_memory": True
-        }
-        with open(config_file, "w") as f:
-            json.dump(config, f, indent=2)
-        
-        console.print(f"[dim]✅ Created config: {config_file}[/dim]")
+class WebTool:
+    """Tool for fetching and processing web content."""
 
-    # Create active_mode.md
-    active_mode = base / "modes" / "active_mode.md"
-    if not active_mode.exists():
-        active_mode.write_text("""# Active Mode
+    def execute(self, action: str, url: str,
+                selector: str = None) -> str:
+        """
+        Execute a web operation.
 
-## Description
-Elite offensive security research mode for bug bounty hunting.
-Optimized for HackerOne researchers with critical/high findings.
+        Args:
+            action: fetch/extract/headers
+            url: Target URL
+            selector: CSS selector for extraction
 
-## Role
-You are an elite Offensive Security Mentor and Bug Bounty Research Partner.
-Treat user as senior researcher. Skip beginner explanations unless asked.
-All testing is authorized and in confirmed scope. Responsible disclosure always.
+        Returns:
+            Fetched content or summary
+        """
+        try:
+            validated_url = self._validate_url(url)
+        except ValueError as exc:
+            return f"❌ Invalid URL: {exc}"
 
-Default output structure:
-🔍 PHASE: [Recon/Enum/Exploit/Post-Ex/Report]
-📊 OBSERVATION: [Analysis]
-🎯 NUDGE: [Next step / command template]
-🧠 KEY CONCEPT: [Security principle + MITRE ATT&CK TTP]
-📈 CHAIN POTENTIAL: [What this leads to]
-⚖️ ETHICS CHECK: [Scope reminder if needed]
+        try:
+            if action == "fetch":
+                return self._fetch(validated_url)
+            if action == "extract":
+                return self._extract(validated_url, selector)
+            if action == "headers":
+                return self._headers(validated_url)
+            return f"❌ Unknown action: {action}. Use: fetch/extract/headers"
+        except Exception as exc:
+            return f"❌ Web tool error: {exc}"
 
-## Tools
-- file_tool: enabled
-- shell_tool: enabled
-- search_tool: enabled
-- fix_tool: enabled
-- web_tool: enabled
+    def _validate_url(self, url: str) -> str:
+        """Reject SSRF-prone and non-HTTP targets."""
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("empty URL")
 
-## Safety
-confirm: dangerous_only
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
 
-## Format
-Always use the 6-phase output structure above.
-Include CVSS v3.1 scores when discussing vulnerabilities.
-Use MITRE ATT&CK TTPs when relevant.
-""")
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("only http/https URLs are allowed")
+        if not parsed.netloc:
+            raise ValueError("URL is missing a hostname")
 
-    # Create building_mode.md
-    building_mode = base / "modes" / "building_mode.md"
-    if not building_mode.exists():
-        building_mode.write_text("""# Building Mode
+        hostname = parsed.hostname.lower() if parsed.hostname else ""
+        if hostname in {"localhost", "0.0.0.0", "127.0.0.1", "::1"} or hostname.endswith(".localhost"):
+            raise ValueError("localhost and loopback addresses are blocked")
 
-## Description
-Senior Full-Stack Engineer and AI Architect mode.
-Follows strict REASONING → BLUEPRINT → CONFIRMATION → IMPLEMENTATION flow.
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            ip = None
 
-## Role
-You are an expert Senior Full-Stack Engineer and AI Architect.
-For every task follow these steps:
-1. REASONING: Break down logic, data flow, and potential errors
-2. BLUEPRINT: High-level plan or architectural diagram
-3. CONFIRMATION: Ask for approval before writing code
-4. IMPLEMENTATION: Only after approval, write modular clean code
-5. VERIFICATION: Suggest 3 test cases
+        if ip is not None and (
+            ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+        ):
+            raise ValueError("private/internal IP addresses are blocked")
 
-Use Chain-of-Thought Debugging.
-Write modular, clean, well-documented code.
+        return url
 
-## Tools
-- file_tool: enabled
-- shell_tool: enabled
-- search_tool: enabled
-- fix_tool: enabled
-- web_tool: enabled
+    def _fetch(self, url: str) -> str:
+        """Fetch URL and return text content."""
+        response = requests.get(url, timeout=15, allow_redirects=False)
+        if response.is_redirect or response.is_permanent_redirect:
+            return "❌ Redirects are blocked to prevent SSRF or open redirect abuse."
+        response.raise_for_status()
 
-## Safety
-confirm: always
+        soup = BeautifulSoup(response.text, 'html.parser')
+        for script in soup(["script", "style"]):
+            script.decompose()
 
-## Format
-Use structured headers for each phase.
-Include code blocks with proper language tags.
-Always explain architectural decisions.
-""")
+        text = soup.get_text(separator='\n')
+        lines = (line.strip() for line in text.splitlines())
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        text = '\n'.join(chunk for chunk in chunks if chunk)
 
-    # Create new_mode.md
-    new_mode = base / "modes" / "new_mode.md"
-    if not new_mode.exists():
-        new_mode.write_text("""# New Mode
+        return f"🌐 CONTENT FROM {url}:\n\n{text[:5000]}..."
 
-## Description
-World-class AI Systems Engineer for Vibe Coding and niche SaaS architecture.
-Builds passive-income-generating tools solving Last Mile problems.
+    def _extract(self, url: str, selector: str) -> str:
+        """Extract specific elements using CSS selector."""
+        if not selector:
+            return "❌ Selector required for extract action."
 
-## Role
-You are the Architect-Developer, specializing in Vibe Coding, niche SaaS, and business automation.
+        response = requests.get(url, timeout=15, allow_redirects=False)
+        if response.is_redirect or response.is_permanent_redirect:
+            return "❌ Redirects are blocked to prevent SSRF or open redirect abuse."
+        response.raise_for_status()
 
-Before writing ANY code execute this Thinking Chain:
+        soup = BeautifulSoup(response.text, 'html.parser')
+        elements = soup.select(selector)
 
-THINKING:
-- Analyze user intent
-- Identify Real World friction
-- Outline logic flow, data structure, integrations
-- Identify 3 potential failure points
+        if not elements:
+            return f"🔍 No elements found for selector: {selector}"
 
-REFINEMENT:
-- Critique your own plan
-- Simplify tech stack for non-technical users
-- Ensure solution is Productizable
+        results = [el.get_text().strip() for el in elements]
+        return f"🔍 EXTRACTED ({selector}):\n\n" + "\n---\n".join(results[:20])
 
-BLUEPRINT:
-- Clear high-level summary
-- Ask for confirmation
-
-Use modern lightweight stacks: Next.js, Tailwind, Supabase, Python/FastAPI.
-Write modular Self-Healing code with error handling and logs.
-
-## Tools
-- file_tool: enabled
-- shell_tool: enabled
-- search_tool: enabled
-- fix_tool: enabled
-- web_tool: enabled
-
-## Safety
-confirm: always
-
-## Format
-Concise, expert-level, entrepreneurial.
-No generic advice — give executable solutions.
-Break complex tasks into Sprint 1, Sprint 2, etc.
-""")
-
-    console.print(f"[dim]✅ REDMYTHOS CLAW setup complete at {base}[/dim]")
+    def _headers(self, url: str) -> str:
+        """Get HTTP headers for a URL."""
+        response = requests.head(url, timeout=10, allow_redirects=False)
+        headers = "\n".join([f"{k}: {v}" for k, v in response.headers.items()])
+        return f"📋 HEADERS FOR {url}:\n\n{headers}"

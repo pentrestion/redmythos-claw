@@ -1,156 +1,72 @@
-"""
-REDMYTHOS CLAW 🦀 — File Tool
-Read, write, edit, delete, list files.
-Safe file operations with proper error handling.
-"""
+#!/bin/bash
+# REDMYTHOS CLAW 🦀 — One Command Installer for Termux
+# Run: bash install.sh
 
-import os
-import shutil
-from pathlib import Path
-from typing import Optional
+set -eu
 
-class FileTool:
-    """File system operations tool."""
+RED='\033[0;31m'
+WHITE='\033[1;37m'
+DIM='\033[2m'
+NC='\033[0m'
 
-    def execute(self, action: str, path: str, 
-                content: str = "", encoding: str = "utf-8") -> str:
-        """
-        Execute a file operation.
-        
-        Args:
-            action: read/write/edit/delete/list/exists/mkdir
-            path: File or directory path
-            content: Content for write/edit actions
-            encoding: File encoding
-            
-        Returns:
-            Result string
-        """
-        # Expand ~ and environment variables
-        path = os.path.expandvars(os.path.expanduser(path))
-        
-        try:
-            if action == "read":
-                return self._read(path, encoding)
-            elif action == "write":
-                return self._write(path, content, encoding)
-            elif action == "edit":
-                return self._edit(path, content, encoding)
-            elif action == "delete":
-                return self._delete(path)
-            elif action == "list":
-                return self._list(path)
-            elif action == "exists":
-                return str(Path(path).exists())
-            elif action == "mkdir":
-                return self._mkdir(path)
-            elif action == "copy":
-                return self._copy(path, content)  # content = destination
-            elif action == "move":
-                return self._move(path, content)  # content = destination
-            else:
-                return f"❌ Unknown action: {action}. Use: read/write/edit/delete/list/exists/mkdir"
-        except PermissionError:
-            return f"❌ Permission denied: {path}"
-        except Exception as e:
-            return f"❌ File operation error: {e}"
+echo -e "${RED}"
+echo " ██████╗ ██╗      █████╗ ███████╗███████╗██╗    ██╗██╗███╗   ██╗ ██████╗ "
+echo "██╔════╝ ██║     ██╔══██╗██╔════╝██╔════╝██║    ██║██║████╗  ██║██╔════╝ "
+echo "██║  ███╗██║     ███████║███████╗███████╗██║ █╗ ██║██║██╔██╗ ██║██║  ███╗"
+echo "██║   ██║██║     ██╔══██║╚════██║╚════██║██║███╗██║██║██║╚██╗██║██║   ██║"
+echo "╚██████╔╝███████╗██║  ██║███████║███████║╚███╔███╔╝██║██║ ╚████║╚██████╔╝"
+echo " ╚═════╝ ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝ ╚═════╝ "
+echo -e "${WHITE}REDMYTHOS CLAW 🦀 Installer${NC}"
+echo -e "${DIM}Refined by Mir mahmood khan${NC}"
+echo ""
 
-    def _read(self, path: str, encoding: str) -> str:
-        """Read file contents."""
-        p = Path(path)
-        if not p.exists():
-            return f"❌ File not found: {path}"
-        if p.is_dir():
-            return f"❌ '{path}' is a directory. Use action='list'"
-        
-        # Check file size (limit 1MB for safety)
-        size = p.stat().st_size
-        if size > 1_000_000:
-            return f"⚠️ File is large ({size/1024:.1f}KB). Reading first 10000 chars only.\n\n" + \
-                   p.read_text(encoding=encoding, errors='replace')[:10000]
-        
-        content = p.read_text(encoding=encoding, errors='replace')
-        lines = content.count('\n')
-        return f"📄 {path} ({lines} lines, {size} bytes):\n\n{content}"
+echo -e "${DIM}[1/5] Updating packages...${NC}"
+pkg update -y 2>/dev/null || true
 
-    def _write(self, path: str, content: str, encoding: str) -> str:
-        """Write content to file (creates if not exists)."""
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        
-        existed = p.exists()
-        p.write_text(content, encoding=encoding)
-        
-        action = "Updated" if existed else "Created"
-        return f"✅ {action}: {path} ({len(content)} chars)"
+echo -e "${DIM}[2/5] Installing system dependencies...${NC}"
+pkg install -y python python-pip git curl 2>/dev/null || true
 
-    def _edit(self, path: str, content: str, encoding: str) -> str:
-        """Edit/append to existing file."""
-        p = Path(path)
-        if not p.exists():
-            # Create it
-            return self._write(path, content, encoding)
-        
-        # Append to existing
-        existing = p.read_text(encoding=encoding, errors='replace')
-        p.write_text(existing + "\n" + content, encoding=encoding)
-        return f"✅ Edited: {path}"
+echo -e "${DIM}[3/5] Installing Python dependencies...${NC}"
+python3 -m pip install --requirement requirements.txt --break-system-packages --quiet
 
-    def _delete(self, path: str) -> str:
-        """Delete file or directory."""
-        p = Path(path)
-        if not p.exists():
-            return f"❌ Not found: {path}"
-        
-        if p.is_file():
-            p.unlink()
-            return f"✅ Deleted file: {path}"
-        elif p.is_dir():
-            shutil.rmtree(path)
-            return f"✅ Deleted directory: {path}"
+echo -e "${DIM}[4/5] Setting up ~/.redmythos/ structure...${NC}"
+python3 -c "from config.setup import ensure_setup; ensure_setup()"
 
-    def _list(self, path: str) -> str:
-        """List directory contents."""
-        p = Path(path) if path else Path.cwd()
-        
-        if not p.exists():
-            return f"❌ Directory not found: {path}"
-        if not p.is_dir():
-            return f"❌ '{path}' is a file, not a directory"
-        
-        items = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
-        
-        if not items:
-            return f"📁 {path} (empty)"
-        
-        result = [f"📁 {p.absolute()}:"]
-        for item in items[:100]:  # Limit to 100 items
-            if item.is_dir():
-                result.append(f"  📂 {item.name}/")
-            else:
-                size = item.stat().st_size
-                size_str = f"{size}B" if size < 1024 else f"{size//1024}KB"
-                result.append(f"  📄 {item.name} ({size_str})")
-        
-        if len(items) > 100:
-            result.append(f"  ... and {len(items)-100} more items")
-        
-        return "\n".join(result)
+echo -e "${DIM}[5/5] Making executable...${NC}"
+chmod +x main.py
+mkdir -p ~/.local/bin
 
-    def _mkdir(self, path: str) -> str:
-        """Create directory."""
-        Path(path).mkdir(parents=True, exist_ok=True)
-        return f"✅ Created directory: {path}"
+cat > ~/.local/bin/redmythosclaw <<'EOF'
+#!/bin/bash
+REDMYTHOS_DIR="$HOME/redmythos-claw"
+if [ -d "$REDMYTHOS_DIR" ]; then
+    cd "$REDMYTHOS_DIR"
+    python3 main.py "$@"
+else
+    echo "❌ REDMYTHOS CLAW not found at $REDMYTHOS_DIR"
+fi
+EOF
 
-    def _copy(self, src: str, dst: str) -> str:
-        """Copy file or directory."""
-        if Path(src).is_dir():
-            shutil.copytree(src, dst)
-        else:
-            shutil.copy2(src, dst)
-        return f"✅ Copied: {src} → {dst}"
+chmod +x ~/.local/bin/redmythosclaw 2>/dev/null || true
 
-    def _move(self, src: str, dst: str) -> str:
-        """Move file or directory."""
-        shutil.move(src, dst)
-        return f"✅ Moved: {src} → {dst}"
+echo ""
+echo -e "${RED}✅ REDMYTHOS CLAW installed!${NC}"
+echo ""
+echo -e "${WHITE}Next steps:${NC}"
+echo -e "  1. Add your Gemini API key:"
+echo -e "     ${DIM}nano ~/.redmythos/config.json${NC}"
+echo -e "     Get free key: https://aistudio.google.com/apikey"
+echo ""
+echo -e "  2. Start REDMYTHOS CLAW:"
+echo -e "     ${RED}python3 main.py${NC}"
+echo ""
+echo -e "  3. Switch modes:"
+echo -e "     ${DIM}/mode default${NC}"
+echo -e "     ${DIM}/mode active_mode${NC}"
+echo -e "     ${DIM}/mode building_mode${NC}"
+echo -e "     ${DIM}/mode new_mode${NC}"
+echo ""
+echo -e "  4. Add custom modes:"
+echo -e "     ${DIM}Drop any .md file in ~/.redmythos/modes/${NC}"
+echo ""
+echo -e "${RED}🦀 Happy Hacking!${NC}"

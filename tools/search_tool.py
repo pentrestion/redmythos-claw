@@ -1,85 +1,163 @@
 """
-REDMYTHOS CLAW 🦀 — Search Tool
-Search for patterns in files and directories.
+REDMYTHOS CLAW �� — File Tool
+Read, write, edit, delete, list files.
+Safe file operations with proper error handling.
 """
 
 import os
-import re
+import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
-class SearchTool:
-    """Search files and directories for patterns."""
+from core.safety import SafetyPolicy
 
-    def execute(self, pattern: str, path: str = ".",
-                file_type: Optional[str] = None,
-                case_sensitive: bool = False,
-                max_results: int = 50) -> str:
+
+class FileTool:
+    """File system operations tool."""
+
+    def __init__(self, workspace_root: Optional[str] = None):
+        self.policy = SafetyPolicy(workspace_root)
+        self.workspace_root = str(self.policy.workspace_root)
+
+    def execute(self, action: str, path: str, content: str = "", encoding: str = "utf-8") -> str:
         """
-        Search for a pattern in files.
-        
+        Execute a file operation.
+
         Args:
-            pattern: Search pattern or regex
-            path: Directory or file to search
-            file_type: Filter by extension (e.g., 'py', 'js')
-            case_sensitive: Case sensitive search
-            max_results: Max results to return
-        """
-        path = os.path.expanduser(path)
-        p = Path(path)
-        
-        if not p.exists():
-            return f"❌ Path not found: {path}"
+            action: read/write/edit/delete/list/exists/mkdir
+            path: File or directory path
+            content: Content for write/edit actions
+            encoding: File encoding
 
-        results = []
-        flags = 0 if case_sensitive else re.IGNORECASE
+        Returns:
+            Result string
+        """
+        try:
+            safe_path = self.policy.resolve_workspace_path(path)
+        except ValueError as exc:
+            return f"❌ {exc}"
 
         try:
-            regex = re.compile(pattern, flags)
-        except re.error:
-            # Not a regex, search as literal string
-            regex = re.compile(re.escape(pattern), flags)
+            if action == "read":
+                return self._read(safe_path, encoding)
+            if action == "write":
+                return self._write(safe_path, content, encoding)
+            if action == "edit":
+                return self._edit(safe_path, content, encoding)
+            if action == "delete":
+                return self._delete(safe_path)
+            if action == "list":
+                return self._list(safe_path)
+            if action == "exists":
+                return str(Path(safe_path).exists())
+            if action == "mkdir":
+                return self._mkdir(safe_path)
+            if action == "copy":
+                return self._copy(safe_path, content)
+            if action == "move":
+                return self._move(safe_path, content)
+            return f"❌ Unknown action: {action}. Use: read/write/edit/delete/list/exists/mkdir"
+        except PermissionError:
+            return f"❌ Permission denied: {safe_path}"
+        except Exception as exc:
+            return f"❌ File operation error: {exc}"
 
-        # Search files
+    def _read(self, path: str, encoding: str) -> str:
+        """Read file contents."""
+        p = Path(path)
+        if not p.exists():
+            return f"❌ File not found: {path}"
+        if p.is_dir():
+            return f"❌ '{path}' is a directory. Use action='list'"
+
+        size = p.stat().st_size
+        if size > 1_000_000:
+            return f"⚠️ File is large ({size / 1024:.1f}KB). Reading first 10000 chars only.\n\n" + p.read_text(encoding=encoding, errors="replace")[:10000]
+
+        content = p.read_text(encoding=encoding, errors="replace")
+        lines = content.count("\n")
+        return f"📄 {path} ({lines} lines, {size} bytes):\n\n{content}"
+
+    def _write(self, path: str, content: str, encoding: str) -> str:
+        """Write content to file (creates if not exists)."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+        existed = p.exists()
+        p.write_text(content, encoding=encoding)
+
+        action = "Updated" if existed else "Created"
+        return f"✅ {action}: {path} ({len(content)} chars)"
+
+    def _edit(self, path: str, content: str, encoding: str) -> str:
+        """Edit/append to existing file."""
+        p = Path(path)
+        if not p.exists():
+            return self._write(path, content, encoding)
+
+        existing = p.read_text(encoding=encoding, errors="replace")
+        p.write_text(existing + "\n" + content, encoding=encoding)
+        return f"✅ Edited: {path}"
+
+    def _delete(self, path: str) -> str:
+        """Delete file or directory."""
+        p = Path(path)
+        if not p.exists():
+            return f"❌ Not found: {path}"
+
         if p.is_file():
-            files_to_search = [p]
+            p.unlink()
+            return f"✅ Deleted file: {path}"
+        if p.is_dir():
+            shutil.rmtree(path)
+            return f"✅ Deleted directory: {path}"
+        return f"❌ Unsupported delete target: {path}"
+
+    def _list(self, path: str) -> str:
+        """List directory contents."""
+        p = Path(path) if path else Path(self.workspace_root)
+
+        if not p.exists():
+            return f"❌ Directory not found: {path}"
+        if not p.is_dir():
+            return f"❌ '{path}' is a file, not a directory"
+
+        items = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
+
+        if not items:
+            return f"📁 {path} (empty)"
+
+        result = [f"📁 {p.absolute()}:"]
+        for item in items[:100]:
+            if item.is_dir():
+                result.append(f"  📂 {item.name}/")
+            else:
+                size = item.stat().st_size
+                size_str = f"{size}B" if size < 1024 else f"{size // 1024}KB"
+                result.append(f"  📄 {item.name} ({size_str})")
+
+        if len(items) > 100:
+            result.append(f"  ... and {len(items) - 100} more items")
+
+        return "\n".join(result)
+
+    def _mkdir(self, path: str) -> str:
+        """Create directory."""
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return f"✅ Created directory: {path}"
+
+    def _copy(self, src: str, dst: str) -> str:
+        """Copy file or directory."""
+        src_path = Path(src)
+        dst_path = Path(self.policy.resolve_workspace_path(dst))
+        if src_path.is_dir():
+            shutil.copytree(src_path, dst_path)
         else:
-            files_to_search = []
-            for root, dirs, files in os.walk(path):
-                # Skip hidden and common ignore dirs
-                dirs[:] = [d for d in dirs if not d.startswith('.') 
-                           and d not in ['node_modules', '__pycache__', 
-                                        '.git', 'venv', 'env']]
-                for file in files:
-                    file_path = Path(root) / file
-                    if file_type:
-                        if not file.endswith(f".{file_type.lstrip('.')}"):
-                            continue
-                    files_to_search.append(file_path)
+            shutil.copy2(src_path, dst_path)
+        return f"✅ Copied: {src} → {dst}"
 
-        for file_path in files_to_search:
-            if len(results) >= max_results:
-                break
-            
-            try:
-                content = file_path.read_text(encoding='utf-8', errors='replace')
-                lines = content.split('\n')
-                
-                for line_num, line in enumerate(lines, 1):
-                    if regex.search(line):
-                        results.append(
-                            f"📄 {file_path}:{line_num}: {line.strip()}"
-                        )
-                        if len(results) >= max_results:
-                            break
-            except Exception:
-                continue  # Skip unreadable files
-
-        if not results:
-            return f"🔍 No matches found for '{pattern}' in {path}"
-        
-        header = f"🔍 Found {len(results)} match(es) for '{pattern}':\n"
-        if len(results) >= max_results:
-            header += f"(Showing first {max_results} results)\n"
-        
-        return header + "\n".join(results)
+    def _move(self, src: str, dst: str) -> str:
+        """Move file or directory."""
+        dst_path = Path(self.policy.resolve_workspace_path(dst))
+        shutil.move(src, dst_path)
+        return f"✅ Moved: {src} → {dst}"

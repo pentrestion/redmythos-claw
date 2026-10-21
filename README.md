@@ -1,161 +1,197 @@
-# REDMYTHOS CLAW 🦀
+"""
+REDMYTHOS CLAW 🦀 — Shell Tool
+Execute terminal commands safely in Termux.
+Only allows direct argument execution without shell metacharacters.
+"""
 
-Open-source AI coding agent for Termux and Android — a lightweight, Gemini-powered alternative to Claude Code for mobile-first software workflows.
+import os
+import shlex
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Optional
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](LICENSE)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-red.svg)](https://python.org)
-[![Termux](https://img.shields.io/badge/Termux-Optimized-black.svg)](https://termux.dev)
-[![GitHub Repo](https://img.shields.io/badge/GitHub-Repo-red?logo=github)](https://github.com/pentrestion/redmythos-claw)
 
-REDMYTHOS CLAW is an autonomous AI agent framework built for Android and Termux. It helps you automate coding tasks, terminal operations, file manipulation, search, web lookup, and task execution using Google Gemini from your phone or terminal.
+class ShellTool:
+    """Safe shell command execution tool."""
 
-This project is designed for developers, security researchers, and power users who want a mobile-first AI assistant that can reason through tasks, plan steps, and act with tool access.
+    BLOCKED_COMMANDS = [
+        "rm -rf /",
+        "rm -rf /*",
+        "mkfs",
+        "dd if=/dev/zero",
+        ":(){:|:&};:",
+    ]
 
-## Why this project exists
+    ALLOWED_INTERPRETERS = {
+        "bash",
+        "python",
+        "python3",
+        "node",
+        "ruby",
+        "perl",
+        "php",
+    }
 
-Most AI tools are built around a desktop workflow. REDMYTHOS CLAW is built for the reality of mobile development and terminal-first environments:
+    DANGEROUS_SHELL_CHARS = (";", "&&", "||", "|", ">", "<", "`", "$(")
 
-- Run an AI agent from Termux on Android
-- Automate research, planning, and execution loops
-- Use Gemini to work with files, commands, and web tools
-- Extend the system with custom tools, skills, and MCP support
-- Keep the workflow lightweight and open source
+    def execute(self, command: str, timeout: int = 30,
+                cwd: Optional[str] = None,
+                env: Optional[dict] = None) -> str:
+        """
+        Execute a shell command using argument arrays instead of shell=True.
 
-## Key features
+        Args:
+            command: Shell command to execute
+            timeout: Timeout in seconds
+            cwd: Working directory
+            env: Environment variables
 
-- Termux AI agent for Android
-- Gemini-powered autonomous reasoning loop
-- Claude Code-style workflow for coding and task execution
-- Dynamic tool loading from the `tools/` directory
-- Markdown skill system via `skills/`
-- MCP server support for external integrations
-- Built for research, coding, automation, and security workflows
-- Lightweight Python architecture
+        Returns:
+            Command output (stdout + stderr)
+        """
+        if not isinstance(command, str) or not command.strip():
+            return "❌ Empty command provided."
 
-## How it works
+        normalized = command.strip()
+        for blocked in self.BLOCKED_COMMANDS:
+            if blocked in normalized:
+                return f"❌ BLOCKED: Dangerous command detected: {blocked}"
 
-REDMYTHOS CLAW follows a structured reasoning lifecycle:
+        if any(token in normalized for token in self.DANGEROUS_SHELL_CHARS):
+            return (
+                "❌ Refusing command because it contains shell operators that can be used "
+                "for command injection or redirection."
+            )
 
-1. RESEARCH — inspect files, environment, and external sources
-2. STRATEGY — turn the goal into a plan
-3. PLAN — break the work into actionable tasks
-4. ACT — execute tools and commands
-5. VALIDATE — verify the result before finishing
+        try:
+            argv = shlex.split(normalized, posix=True)
+        except ValueError as exc:
+            return f"❌ Invalid command syntax: {exc}"
 
-This makes it useful for more than chat. It can act as a reasoning partner for development tasks and automation.
+        if not argv:
+            return "❌ Empty command after parsing."
 
-## Quick start
+        executable = Path(argv[0]).name
+        if executable not in self.ALLOWED_INTERPRETERS and not os.path.isabs(argv[0]):
+            return f"❌ BLOCKED: Command '{argv[0]}' is not allowed in this environment"
 
-```bash
-git clone https://github.com/pentrestion/redmythos-claw
-cd redmythos-claw
-bash install.sh
-redmythosclaw
-```
+        if cwd:
+            cwd = os.path.expanduser(cwd)
+            if not os.path.isdir(cwd):
+                return f"❌ Working directory does not exist: {cwd}"
 
-## Requirements
+        try:
+            result = subprocess.run(
+                argv,
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=cwd,
+                env={**os.environ, **(env or {})},
+                errors='replace'
+            )
 
-- Python 3.8+
-- Termux or Linux/macOS environment
-- Google Gemini API access
-- Git
+            output = []
+            if result.stdout.strip():
+                output.append(result.stdout.strip())
+            if result.stderr.strip():
+                output.append(f"STDERR:\n{result.stderr.strip()}")
+            if result.returncode != 0:
+                output.append(f"Exit code: {result.returncode}")
 
-## Configuration
+            if not output:
+                return f"✅ Command completed (exit code: {result.returncode})"
+            return "\n".join(output)
 
-On first run, the project creates a config under `~/.redmythos/` and sets up:
+        except subprocess.TimeoutExpired:
+            return f"⏰ Command timed out after {timeout}s: {normalized}"
+        except FileNotFoundError as exc:
+            return f"❌ Command not found: {exc}"
+        except Exception as exc:
+            return f"❌ Shell error: {exc}"
 
-- `~/.redmythos/config.json`
-- `~/.redmythos/modes/`
-- `~/.redmythos/extensions/`
-- `~/.redmythos/mcp/`
-- `~/.redmythos/memory/`
+    def run_script(self, script_content: str,
+                   language: str = "python3",
+                   timeout: int = 60) -> str:
+        """
+        Run a script by writing to temp file and executing it.
 
-Set your Gemini API key in the generated config file before using the agent.
+        Args:
+            script_content: Script code
+            language: bash/python/node/ruby/go/rust
+            timeout: Timeout in seconds
+        """
+        language = (language or "python3").lower()
+        if language not in self.ALLOWED_INTERPRETERS:
+            return f"❌ BLOCKED: Interpreter '{language}' is not allowed in this environment"
 
-## Available commands
+        extensions = {
+            "bash": ".sh",
+            "python": ".py",
+            "python3": ".py",
+            "node": ".js",
+            "javascript": ".js",
+            "ruby": ".rb",
+            "perl": ".pl",
+            "php": ".php",
+        }
 
-| Command | Description |
-|---------|-------------|
-| `/mode <name>` | Switch agent mode |
-| `/modes` | List all available modes |
-| `/mcp` | Manage MCP server configuration |
-| `/memory` | View or clear session memory |
-| `/help` | Show command list |
-| `/exit` | Exit the app |
+        interpreters = {
+            "bash": "bash",
+            "python": "python3",
+            "python3": "python3",
+            "node": "node",
+            "javascript": "node",
+            "ruby": "ruby",
+            "perl": "perl",
+            "php": "php",
+        }
 
-## Customization
+        ext = extensions.get(language, ".sh")
+        interpreter = interpreters.get(language, language)
 
-### Add new tools
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            suffix=ext,
+            delete=False,
+            prefix="redmythos_"
+        ) as temp_file:
+            temp_file.write(script_content)
+            temp_path = temp_file.name
 
-Drop any Python file into `tools/` with an `execute()` method. The registry auto-discovers it.
+        try:
+            result = subprocess.run(
+                [interpreter, temp_path],
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                errors='replace'
+            )
 
-### Add new skills
+            output = []
+            if result.stdout.strip():
+                output.append(result.stdout.strip())
+            if result.stderr.strip():
+                output.append(f"STDERR:\n{result.stderr.strip()}")
+            if result.returncode != 0:
+                output.append(f"Exit code: {result.returncode}")
+            return "\n".join(output) if output else f"✅ Script completed (exit code: {result.returncode})"
+        except subprocess.TimeoutExpired:
+            return f"⏰ Script timed out after {timeout}s"
+        except FileNotFoundError as exc:
+            return f"❌ Interpreter not found: {exc}"
+        except Exception as exc:
+            return f"❌ Shell script error: {exc}"
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
 
-Place `.md` or `.txt` files into `skills/` to give the agent domain-specific knowledge.
+    @staticmethod
+    def _is_allowed_executable(command: str) -> bool:
+        """Return True when an executable is explicitly allowed."""
+        return Path(command).name.lower() in ShellTool.ALLOWED_INTERPRETERS
 
-### MCP support
 
-REDMYTHOS CLAW supports MCP servers for extending the agent with external tools and resources.
-
-## Project structure
-
-```text
-.
-├── README.md
-├── LICENSE
-├── install.sh
-├── main.py
-├── requirements.txt
-├── config/
-│   └── setup.py
-├── core/
-│   ├── agent.py
-│   ├── gemini.py
-│   ├── mcp_client.py
-│   ├── memory.py
-│   ├── mode_loader.py
-│   └── tool_registry.py
-├── modes/
-├── skills/
-├── tools/
-│   ├── file_tool.py
-│   ├── fix_tool.py
-│   ├── search_tool.py
-│   ├── shell_tool.py
-│   └── web_tool.py
-└── .gitignore
-```
-
-## Example use cases
-
-- Run coding tasks from your Android device
-- Use Gemini to inspect code and plan fixes
-- Automate repetitive terminal workflows
-- Research and validate security issues in a controlled environment
-- Build custom mobile automation workflows with agentic reasoning
-
-## Security
-
-The project includes safety-oriented behavior. Dangerous actions may require confirmation depending on your active mode. Review the mode configuration and use the tool responsibly.
-
-## License
-
-MIT License
-
-## Built for
-
-- Termux users
-- Android developers
-- AI automation enthusiasts
-- security researchers
-- people exploring Gemini-powered autonomous agents
-
-## Keywords
-
-Termux AI, Android Agent, Gemini API, Autonomous Agent, Claude Code Alternative, AI Coding Agent, Mobile Automation, Open Source AI Tool, Termux Developer Tools, Python AI Agent
-
-## Author
-
-Built by Mir mahmood khan
-
----
+__all__ = ["ShellTool"]
