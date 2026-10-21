@@ -1,133 +1,72 @@
-"""
-REDMYTHOS CLAW 🦀 — Shell Tool
-Execute terminal commands safely in a workspace-limited environment.
-"""
+#!/bin/bash
+# REDMYTHOS CLAW 🦀 — One Command Installer for Termux
+# Run: bash install.sh
 
-import os
-import shlex
-import subprocess
-import tempfile
-from pathlib import Path
-from typing import Optional
+set -eu
 
-from core.safety import SafetyPolicy
+RED='\033[0;31m'
+WHITE='\033[1;37m'
+DIM='\033[2m'
+NC='\033[0m'
 
+echo -e "${RED}"
+echo " ██████╗ ██╗      █████╗ ███████╗███████╗██╗    ██╗██╗███╗   ██╗ ██████╗ "
+echo "██╔════╝ ██║     ██╔══██╗██╔════╝██╔════╝██║    ██║██║████╗  ██║██╔════╝ "
+echo "██║  ███╗██║     ███████║███████╗███████╗██║ █╗ ██║██║██╔██╗ ██║██║  ███╗"
+echo "██║   ██║██║     ██╔══██║╚════██║╚════██║██║███╗██║██║██║╚██╗██║██║   ██║"
+echo "╚██████╔╝███████╗██║  ██║███████║███████║╚███╔███╔╝██║██║ ╚████║╚██████╔╝"
+echo " ╚═════╝ ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝ ╚═════╝ "
+echo -e "${WHITE}REDMYTHOS CLAW 🦀 Installer${NC}"
+echo -e "${DIM}Refined by Mir mahmood khan${NC}"
+echo ""
 
-class ShellTool:
-    """Safe shell command execution tool."""
+echo -e "${DIM}[1/5] Updating packages...${NC}"
+pkg update -y 2>/dev/null || true
 
-    def __init__(self, workspace_root: Optional[str] = None):
-        self.policy = SafetyPolicy(workspace_root)
-        self.workspace_root = str(self.policy.workspace_root)
+echo -e "${DIM}[2/5] Installing system dependencies...${NC}"
+pkg install -y python python-pip git curl 2>/dev/null || true
 
-    def execute(self, command: str, timeout: int = 30, cwd: Optional[str] = None, env: Optional[dict] = None) -> str:
-        """
-        Execute a shell command.
+echo -e "${DIM}[3/5] Installing Python dependencies...${NC}"
+python3 -m pip install --requirement requirements.txt --break-system-packages --quiet
 
-        Args:
-            command: Shell command to execute
-            timeout: Timeout in seconds
-            cwd: Working directory
-            env: Environment variables
+echo -e "${DIM}[4/5] Setting up ~/.redmythos/ structure...${NC}"
+python3 -c "from config.setup import ensure_setup; ensure_setup()"
 
-        Returns:
-            Command output (stdout + stderr)
-        """
-        try:
-            self.policy.validate_command(command)
-        except ValueError as exc:
-            return f"❌ BLOCKED: {exc}"
+echo -e "${DIM}[5/5] Making executable...${NC}"
+chmod +x main.py
+mkdir -p ~/.local/bin
 
-        target_cwd = self.workspace_root if not cwd else self.policy.resolve_workspace_path(cwd)
+cat > ~/.local/bin/redmythosclaw <<'EOF'
+#!/bin/bash
+REDMYTHOS_DIR="$HOME/redmythos-claw"
+if [ -d "$REDMYTHOS_DIR" ]; then
+    cd "$REDMYTHOS_DIR"
+    python3 main.py "$@"
+else
+    echo "❌ REDMYTHOS CLAW not found at $REDMYTHOS_DIR"
+fi
+EOF
 
-        safe_env = {**os.environ, **(env or {})}
-        safe_env.setdefault("HOME", str(Path.home()))
-        safe_env.setdefault("PATH", os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"))
+chmod +x ~/.local/bin/redmythosclaw 2>/dev/null || true
 
-        try:
-            cmd_parts = shlex.split(command, posix=True)
-            result = subprocess.run(
-                cmd_parts,
-                shell=False,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=target_cwd,
-                env=safe_env,
-                errors="replace",
-            )
-
-            output = []
-            if result.stdout.strip():
-                output.append(result.stdout.strip())
-            if result.stderr.strip():
-                output.append(f"STDERR:\n{result.stderr.strip()}")
-            if result.returncode != 0:
-                output.append(f"Exit code: {result.returncode}")
-
-            if not output:
-                return f"✅ Command completed (exit code: {result.returncode})"
-            return "\n".join(output)
-
-        except subprocess.TimeoutExpired:
-            return f"⏰ Command timed out after {timeout}s: {command}"
-        except FileNotFoundError as exc:
-            return f"❌ Command not found: {exc}"
-        except Exception as exc:
-            return f"❌ Shell error: {exc}"
-
-    def run_script(self, script_content: str, language: str = "bash", timeout: int = 60) -> str:
-        """
-        Run a script by writing to a temporary workspace file and executing it.
-
-        Args:
-            script_content: Script code
-            language: bash/python/node/ruby/go/rust
-            timeout: Timeout in seconds
-        """
-        extensions = {
-            "bash": ".sh",
-            "python": ".py",
-            "python3": ".py",
-            "node": ".js",
-            "javascript": ".js",
-            "ruby": ".rb",
-            "perl": ".pl",
-            "php": ".php",
-        }
-
-        interpreters = {
-            "bash": "bash",
-            "python": "python3",
-            "python3": "python3",
-            "node": "node",
-            "javascript": "node",
-            "ruby": "ruby",
-            "perl": "perl",
-            "php": "php",
-        }
-
-        normalized_language = language.lower()
-        if normalized_language not in interpreters:
-            return f"❌ Script language '{language}' is not allowed"
-
-        ext = extensions[normalized_language]
-        interpreter = interpreters[normalized_language]
-
-        storage_dir = Path(self.workspace_root) / ".tmp"
-        storage_dir.mkdir(parents=True, exist_ok=True)
-
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=ext,
-            dir=str(storage_dir),
-            delete=False,
-            prefix="redmythos_",
-        ) as handle:
-            handle.write(script_content)
-            temp_path = handle.name
-
-        try:
-            return self.execute(f"{interpreter} {shlex.quote(temp_path)}", timeout=timeout, cwd=self.workspace_root)
-        finally:
-            Path(temp_path).unlink(missing_ok=True)
+echo ""
+echo -e "${RED}✅ REDMYTHOS CLAW installed!${NC}"
+echo ""
+echo -e "${WHITE}Next steps:${NC}"
+echo -e "  1. Add your Gemini API key:"
+echo -e "     ${DIM}nano ~/.redmythos/config.json${NC}"
+echo -e "     Get free key: https://aistudio.google.com/apikey"
+echo ""
+echo -e "  2. Start REDMYTHOS CLAW:"
+echo -e "     ${RED}python3 main.py${NC}"
+echo ""
+echo -e "  3. Switch modes:"
+echo -e "     ${DIM}/mode default${NC}"
+echo -e "     ${DIM}/mode active_mode${NC}"
+echo -e "     ${DIM}/mode building_mode${NC}"
+echo -e "     ${DIM}/mode new_mode${NC}"
+echo ""
+echo -e "  4. Add custom modes:"
+echo -e "     ${DIM}Drop any .md file in ~/.redmythos/modes/${NC}"
+echo ""
+echo -e "${RED}🦀 Happy Hacking!${NC}"
