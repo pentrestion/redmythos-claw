@@ -1,142 +1,187 @@
 """
-REDMYTHOS CLAW 🦀 — Shell Tool
-Execute terminal commands safely in Termux.
-Always confirms before execution (safety: always mode).
+REDMYTHOS CLAW 🦀 — Setup & Config
+Ensures ~/.redmythos/ structure exists on first run.
 """
 
-import subprocess
-import shlex
-import os
+import json
 from pathlib import Path
-from typing import Optional
 
-class ShellTool:
-    """Safe shell command execution tool."""
+from rich.console import Console
 
-    # Commands that are always blocked (safety)
-    BLOCKED_COMMANDS = [
-        "rm -rf /",
-        "rm -rf /*", 
-        "mkfs",
-        "dd if=/dev/zero",
-        ":(){:|:&};:",  # Fork bomb
+console = Console()
+
+
+def ensure_setup():
+    """Create ~/.redmythos/ structure if it doesn't exist."""
+
+    base = Path.home() / ".redmythos"
+
+    # Create all directories.
+    dirs = [
+        base,
+        base / "modes",
+        base / "extensions",
+        base / "mcp",
+        base / "memory",
+        base / "logs",
+        base / "plugins",
+        base / "workspace",
+        base / "workspace" / ".tmp",
     ]
 
-    def execute(self, command: str, timeout: int = 30,
-                cwd: Optional[str] = None, 
-                env: Optional[dict] = None) -> str:
-        """
-        Execute a shell command.
-        
-        Args:
-            command: Shell command to execute
-            timeout: Timeout in seconds
-            cwd: Working directory
-            env: Environment variables
-            
-        Returns:
-            Command output (stdout + stderr)
-        """
-        # Safety check
-        for blocked in self.BLOCKED_COMMANDS:
-            if blocked in command:
-                return f"❌ BLOCKED: Dangerous command detected: {blocked}"
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
 
-        # Expand home directory in cwd
-        if cwd:
-            cwd = os.path.expanduser(cwd)
-
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=cwd,
-                env={**os.environ, **(env or {})},
-                errors='replace'
-            )
-
-            output = []
-            
-            # Add stdout
-            if result.stdout.strip():
-                output.append(result.stdout.strip())
-            
-            # Add stderr
-            if result.stderr.strip():
-                output.append(f"STDERR:\n{result.stderr.strip()}")
-            
-            # Add return code if non-zero
-            if result.returncode != 0:
-                output.append(f"Exit code: {result.returncode}")
-
-            if not output:
-                return f"✅ Command completed (exit code: {result.returncode})"
-            
-            return "\n".join(output)
-
-        except subprocess.TimeoutExpired:
-            return f"⏰ Command timed out after {timeout}s: {command}"
-        except FileNotFoundError as e:
-            return f"❌ Command not found: {e}"
-        except Exception as e:
-            return f"❌ Shell error: {e}"
-
-    def run_script(self, script_content: str, 
-                   language: str = "bash",
-                   timeout: int = 60) -> str:
-        """
-        Run a script by writing to temp file and executing.
-        
-        Args:
-            script_content: Script code
-            language: bash/python/node/ruby/go/rust
-            timeout: Timeout in seconds
-        """
-        import tempfile
-        
-        extensions = {
-            "bash": ".sh",
-            "python": ".py",
-            "python3": ".py",
-            "node": ".js",
-            "javascript": ".js",
-            "ruby": ".rb",
-            "perl": ".pl",
-            "php": ".php"
+    # Create config.json if it doesn't exist.
+    config_file = base / "config.json"
+    if not config_file.exists():
+        config = {
+            "_comment": "REDMYTHOS CLAW Configuration",
+            "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
+            "default_mode": "default",
+            "theme": "red",
+            "max_iterations": 10,
+            "log_level": "INFO",
+            "auto_save_memory": True,
+            "workspace_root": str(base / "workspace"),
+            "execution_policy": "workspace-limited",
+            "network_policy": "public-only",
         }
-        
-        interpreters = {
-            "bash": "bash",
-            "python": "python3",
-            "python3": "python3",
-            "node": "node",
-            "javascript": "node",
-            "ruby": "ruby",
-            "perl": "perl",
-            "php": "php"
-        }
-        
-        ext = extensions.get(language.lower(), ".sh")
-        interpreter = interpreters.get(language.lower(), language)
-        
-        with tempfile.NamedTemporaryFile(
-            mode='w', 
-            suffix=ext, 
-            delete=False,
-            prefix="redmythos_"
-        ) as f:
-            f.write(script_content)
-            temp_path = f.name
-        
-        try:
-            result = self.execute(
-                f"{interpreter} {temp_path}",
-                timeout=timeout
-            )
-        finally:
-            Path(temp_path).unlink(missing_ok=True)
-        
-        return result
+        with open(config_file, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+
+        console.print(f"[dim]✅ Created config: {config_file}[/dim]")
+
+    # Create active_mode.md
+    active_mode = base / "modes" / "active_mode.md"
+    if not active_mode.exists():
+        active_mode.write_text(
+            """# Active Mode
+
+## Description
+Elite offensive security research mode for bug bounty hunting.
+Optimized for HackerOne researchers with critical/high findings.
+
+## Role
+You are an elite Offensive Security Mentor and Bug Bounty Research Partner.
+Treat user as senior researcher. Skip beginner explanations unless asked.
+All testing is authorized and in confirmed scope. Responsible disclosure always.
+
+Default output structure:
+🔍 PHASE: [Recon/Enum/Exploit/Post-Ex/Report]
+📊 OBSERVATION: [Analysis]
+🎯 NUDGE: [Next step / command template]
+🧠 KEY CONCEPT: [Security principle + MITRE ATT&CK TTP]
+📈 CHAIN POTENTIAL: [What this leads to]
+⚖️ ETHICS CHECK: [Scope reminder if needed]
+
+## Tools
+- file_tool: enabled
+- shell_tool: enabled
+- search_tool: enabled
+- fix_tool: enabled
+- web_tool: enabled
+
+## Safety
+confirm: dangerous_only
+
+## Format
+Always use the 6-phase output structure above.
+Include CVSS v3.1 scores when discussing vulnerabilities.
+Use MITRE ATT&CK TTPs when relevant.
+""",
+            encoding="utf-8",
+        )
+
+    # Create building_mode.md
+    building_mode = base / "modes" / "building_mode.md"
+    if not building_mode.exists():
+        building_mode.write_text(
+            """# Building Mode
+
+## Description
+Senior Full-Stack Engineer and AI Architect mode.
+Follows strict REASONING → BLUEPRINT → CONFIRMATION → IMPLEMENTATION flow.
+
+## Role
+You are an expert Senior Full-Stack Engineer and AI Architect.
+For every task follow these steps:
+1. REASONING: Break down logic, data flow, and potential errors
+2. BLUEPRINT: High-level plan or architectural diagram
+3. CONFIRMATION: Ask for approval before writing code
+4. IMPLEMENTATION: Only after approval, write modular clean code
+5. VERIFICATION: Suggest 3 test cases
+
+Use Chain-of-Thought Debugging.
+Write modular, clean, well-documented code.
+
+## Tools
+- file_tool: enabled
+- shell_tool: enabled
+- search_tool: enabled
+- fix_tool: enabled
+- web_tool: enabled
+
+## Safety
+confirm: always
+
+## Format
+Use structured headers for each phase.
+Include code blocks with proper language tags.
+Always explain architectural decisions.
+""",
+            encoding="utf-8",
+        )
+
+    # Create new_mode.md
+    new_mode = base / "modes" / "new_mode.md"
+    if not new_mode.exists():
+        new_mode.write_text(
+            """# New Mode
+
+## Description
+World-class AI Systems Engineer for Vibe Coding and niche SaaS architecture.
+Builds passive-income-generating tools solving Last Mile problems.
+
+## Role
+You are the Architect-Developer, specializing in Vibe Coding, niche SaaS, and business automation.
+
+Before writing ANY code execute this Thinking Chain:
+
+THINKING:
+- Analyze user intent
+- Identify Real World friction
+- Outline logic flow, data structure, integrations
+- Identify 3 potential failure points
+
+REFINEMENT:
+- Critique your own plan
+- Simplify tech stack for non-technical users
+- Ensure solution is Productizable
+
+BLUEPRINT:
+- Clear high-level summary
+- Ask for confirmation
+
+Use modern lightweight stacks: Next.js, Tailwind, Supabase, Python/FastAPI.
+Write modular Self-Healing code with error handling and logs.
+
+## Tools
+- file_tool: enabled
+- shell_tool: enabled
+- search_tool: enabled
+- fix_tool: enabled
+- web_tool: enabled
+
+## Safety
+confirm: always
+
+## Format
+Concise, expert-level, entrepreneurial.
+No generic advice — give executable solutions.
+Break complex tasks into Sprint 1, Sprint 2, etc.
+""",
+            encoding="utf-8",
+        )
+
+    console.print(f"[dim]✅ REDMYTHOS CLAW setup complete at {base}[/dim]")

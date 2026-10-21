@@ -1,217 +1,128 @@
 """
-REDMYTHOS CLAW 🦀 — ReAct Agent Brain
-The core intelligence loop:
-RESEARCH → STRATEGY → PLAN → ACT → VALIDATE
+Centralized safety helpers for REDMYTHOS CLAW.
+Provides workspace isolation, command allowlisting, and public-only URL validation.
 """
 
-import json
-import time
+from __future__ import annotations
+
+import ipaddress
 import os
-from typing import Dict, List, Optional, Any
-from rich.console import Console
-from rich.panel import Panel
-from rich.prompt import Confirm
-from rich.markdown import Markdown
+import re
+import shlex
+from pathlib import Path
+from urllib.parse import urlparse
 
-from core.gemini import GeminiClient
-from core.memory import Memory
-from core.mcp_client import MCPClient
-from core.tool_registry import ToolRegistry
 
-console = Console()
+class SafetyPolicy:
+    """Restrict unsafe filesystem and shell access to safe defaults."""
 
-class RedMythosAgent:
-    """
-    The main REDMYTHOS CLAW agent.
-    Follows Research -> Strategy -> Execution (Plan-Act-Validate) lifecycle.
-    Implements autonomous reasoning with dynamic tool loading.
-    """
+    ALLOWED_COMMANDS = {
+        "ls",
+        "pwd",
+        "echo",
+        "cat",
+        "head",
+        "tail",
+        "grep",
+        "find",
+        "python",
+        "python3",
+        "git",
+        "node",
+        "npm",
+        "npx",
+        "pip",
+        "pip3",
+        "jq",
+        "sed",
+        "awk",
+        "uname",
+        "whoami",
+        "which",
+    }
 
-    MAX_ITERATIONS = 15  # Safety limit
+    BLOCKED_PATTERNS = [
+        r"rm\s+-rf\s+/?",
+        r"mkfs",
+        r"dd\s+if=/dev/zero",
+        r":\(\)\s*\{\s*:\s*\|\s*:&\s*\}\s*;\s*:",
+        r"chmod\s+777",
+        r"wget\s+.*\|\s*(bash|sh)",
+        r"curl\s+.*\|\s*(bash|sh)",
+    ]
 
-    def __init__(self, mode_loader, memory: Memory, mcp: MCPClient):
-        self.mode_loader = mode_loader
-        self.memory = memory
-        self.mcp = mcp
-        self.gemini = GeminiClient()
-        self.current_mode = None
-        self.current_mode_name = "default"
-        
-        # Initialize Tool Registry (Dynamic Loading)
-        # Assuming core/agent.py is in redmythos-claw/core/
-        tools_path = Path(__file__).parent.parent / "tools"
-        self.tool_registry = ToolRegistry(tools_path)
-        
-        # Extensions loaded dynamically
-        self.extensions: Dict = {}
-        
-        # Agentic State (Claude Code inspired)
-        self.task_list: List[str] = []
-        self.completed_tasks: List[str] = []
+    def __init__(self, workspace_root: str | None = None):
+        base = Path(workspace_root).expanduser() if workspace_root else Path.home() / ".redmythos" / "workspace"
+        self.workspace_root = base.resolve()
+        self.workspace_root.mkdir(parents=True, exist_ok=True)
 
-    def set_mode(self, mode: Dict):
-        """Set the active mode."""
-        self.current_mode = mode
-        self.current_mode_name = mode.get("name", "default")
-        self.gemini.reset_conversation()
-        
-        for server in mode.get("mcp_servers", []):
-            self.mcp.register_server(server)
+    def resolve_workspace_path(self, user_path: str) -> str:
+        """Resolve a user path and enforce that it stays inside the workspace root."""
+        if not user_path or user_path in (".", "./"):
+            return str(self.workspace_root)
 
-        for ext_name in mode.get("extensions", []):
-            self._load_extension(ext_name)
-
-    def _load_extension(self, name: str):
-        """Load an extension by name."""
-        import importlib.util
-        from pathlib import Path
-        ext_path = Path.home() / ".redmythos" / "extensions" / name / "main.py"
-        if ext_path.exists():
-            try:
-                spec = importlib.util.spec_from_file_location(name, ext_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                if hasattr(module, 'Extension'):
-                    self.extensions[name] = module.Extension()
-                    console.print(f"[dim]✅ Extension loaded: {name}[/dim]")
-            except Exception as e:
-                console.print(f"[red]Failed to load extension '{name}': {e}[/red]")
-
-    def list_extensions(self) -> List[str]:
-        """List loaded extensions."""
-        from pathlib import Path
-        ext_dir = Path.home() / ".redmythos" / "extensions"
-        if not ext_dir.exists():
-            return []
-        return [d.name for d in ext_dir.iterdir() if d.is_dir()]
-
-    def _get_available_tools(self) -> List[Dict]:
-        """Get tools available in current mode."""
-        mode_tools = {}
-        if self.current_mode:
-            mode_tools = self.current_mode.get("tools", {})
-
-        all_definitions = self.tool_registry.get_definitions()
-        available = []
-
-        for definition in all_definitions:
-            tool_name = definition["name"]
-            status = mode_tools.get(tool_name, "enabled")
-            if status != "disabled":
-                tool_def = definition.copy()
-                if status == "read-only":
-                    tool_def["description"] += " [READ ONLY]"
-                available.append(tool_def)
-
-        # Add MCP tools
-        available.extend(self.mcp.get_available_tools())
-
-        return available
-
-    def _execute_tool(self, tool_name: str, tool_input: Dict) -> str:
-        """Execute a tool and return the result."""
-        # Permission check
-        if self.current_mode:
-            mode_tools = self.current_mode.get("tools", {})
-            status = mode_tools.get(tool_name, "enabled")
-            if status == "disabled":
-                return f"❌ Tool '{tool_name}' is disabled."
-            if status == "read-only" and tool_input.get("action") in ["write", "edit", "delete"]:
-                return f"❌ Tool '{tool_name}' is read-only."
-
-        # Safety confirmation
-        safety = self.current_mode.get("safety", "always") if self.current_mode else "always"
-        should_confirm = (safety == "always") or (
-            safety == "dangerous_only" and (
-                tool_name in ["shell_tool"] or 
-                tool_input.get("action") in ["delete", "write", "edit"]
-            )
-        )
-
-        if should_confirm:
-            console.print(Panel(
-                f"[yellow]Tool:[/yellow] {tool_name}\n[yellow]Input:[/yellow] {json.dumps(tool_input, indent=2)}",
-                title="⚠️ CONFIRM ACTION", border_style="yellow"
-            ))
-            if not Confirm.ask("[yellow]Execute?[/yellow]"):
-                return "❌ Cancelled."
+        candidate = Path(user_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = (self.workspace_root / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
 
         try:
-            tool = self.tool_registry.get_tool(tool_name)
-            if tool:
-                return tool.execute(**tool_input)
-            elif self.mcp.has_tool(tool_name):
-                return self.mcp.call_tool(tool_name, tool_input)
-            return f"❌ Unknown tool: {tool_name}"
-        except Exception as e:
-            return f"❌ Tool error: {str(e)}"
+            candidate.relative_to(self.workspace_root)
+        except ValueError as exc:
+            raise ValueError(f"Access denied: '{user_path}' is outside the workspace root") from exc
 
-    def run(self, user_message: str) -> str:
-        """Main agent loop with Research-Strategy-Execution lifecycle."""
-        system_prompt = self.current_mode.get("system_prompt", "") if self.current_mode else ""
-        memory_context = self.memory.get_context()
-        if memory_context:
-            system_prompt += f"\n\nREMEMBER FROM PAST:\n{memory_context}"
+        return str(candidate)
 
-        # Inject Agentic State
-        state_context = f"\n\nCURRENT TASK LIST:\n{json.dumps(self.task_list, indent=2)}"
-        state_context += f"\nCOMPLETED TASKS:\n{json.dumps(self.completed_tasks, indent=2)}"
-        system_prompt += state_context
+    def validate_command(self, command: str) -> list[str]:
+        """Reject risky shell operations and enforce a limited command allowlist."""
+        if not command or not command.strip():
+            raise ValueError("Empty command is not allowed")
 
-        available_tools = self._get_available_tools()
-        iteration = 0
-        tool_results_context = ""
-        current_stage = "RESEARCH"
+        normalized = command.strip()
+        for pattern in self.BLOCKED_PATTERNS:
+            if re.search(pattern, normalized, flags=re.IGNORECASE):
+                raise ValueError(f"Dangerous command pattern blocked: {normalized[:120]}")
 
-        while iteration < self.MAX_ITERATIONS:
-            iteration += 1
-            current_message = user_message
-            if tool_results_context:
-                current_message = f"{user_message}\n\nTOOL RESULTS:\n{tool_results_context}"
+        if any(token in normalized for token in (";", "&&", "||", "|", "`", "$(", ">", "<")):
+            raise ValueError("Shell operators are blocked for safety")
 
-            response = self.gemini.chat_with_tools(
-                message=current_message,
-                system_prompt=system_prompt,
-                available_tools=available_tools
-            )
+        parts = shlex.split(normalized, posix=True)
+        if not parts:
+            raise ValueError("Command parsed to empty input")
 
-            # Update Internal Task State if provided by LLM in response
-            if "new_tasks" in response and response["new_tasks"]:
-                self.task_list.extend(response["new_tasks"])
-            if "completed_task" in response and response["completed_task"]:
-                if response["completed_task"] in self.task_list:
-                    self.task_list.remove(response["completed_task"])
-                    self.completed_tasks.append(response["completed_task"])
+        executable = os.path.basename(parts[0])
+        if executable not in self.ALLOWED_COMMANDS:
+            raise ValueError(f"Command '{executable}' is not allowed in this environment")
 
-            thought = response.get("thought", "")
-            plan = response.get("plan", "")
-            action = response.get("action")
-            action_input = response.get("action_input", {})
-            validation = response.get("validation", "")
-            final_answer = response.get("final_answer")
+        return parts
 
-            if thought:
-                console.print(Panel(
-                    Markdown(f"**THOUGHT:** {thought}\n\n**PLAN:** {plan}\n\n**VALIDATION:** {validation}"),
-                    title=f"[bold red]💭 {current_stage}[/bold red]", border_style="red"
-                ))
+    def validate_url(self, url: str) -> str:
+        """Reject local/private targets and require public http(s) URLs."""
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            raise ValueError("Only http:// and https:// URLs are permitted")
 
-            if final_answer is not None:
-                self.memory.add(user_message, final_answer)
-                return final_answer
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            raise ValueError("URL hostname is missing")
 
-            if action:
-                if "search" in action or "read" in action_input.get("action", ""):
-                    current_stage = "RESEARCH"
-                elif "write" in action_input.get("action", "") or "shell" in action:
-                    current_stage = "EXECUTION"
-                else:
-                    current_stage = "STRATEGY"
+        if hostname in {"localhost", "0.0.0.0", "127.0.0.1", "::1"}:
+            raise ValueError("Local network targets are blocked")
 
-                console.print(f"\n[bold red]⚡ ACTING:[/bold red] {action}")
-                result = self._execute_tool(action, action_input or {})
-                tool_results_context += f"\n[{action}]: {result}\n"
-            else:
-                return response.get("final_answer", "Clarification needed.")
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            ip = None
 
-        return "⚠️ Max iterations reached."
+        if ip is not None and (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise ValueError(f"Private or reserved network target blocked: {hostname}")
+
+        return url

@@ -1,79 +1,230 @@
 """
-REDMYTHOS CLAW 🦀 — Tool Registry
-Dynamically loads tools from the tools/ directory.
-Allows users to add new tools by simply dropping .py files.
+REDMYTHOS CLAW 🦀 — ReAct Agent Brain
+The core intelligence loop:
+RESEARCH → STRATEGY → PLAN → ACT → VALIDATE
 """
 
-import importlib.util
-import inspect
+import json
+import os
+import time
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, List, Optional
+
 from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Confirm
+
+from core.gemini import GeminiClient
+from core.memory import Memory
+from core.mcp_client import MCPClient
+from core.tool_registry import ToolRegistry
 
 console = Console()
 
-class ToolRegistry:
-    """Registry for managing and dynamically loading tools."""
 
-    def __init__(self, tools_dir: str):
-        self.tools_dir = Path(tools_dir)
-        self.tools: Dict[str, Any] = {}
-        self.tool_definitions: List[Dict] = []
-        self._load_all_tools()
+class RedMythosAgent:
+    """
+    The main REDMYTHOS CLAW agent.
+    Follows Research -> Strategy -> Execution (Plan-Act-Validate) lifecycle.
+    Implements autonomous reasoning with dynamic tool loading.
+    """
 
-    def _load_all_tools(self):
-        """Scan the tools directory and load all valid tool classes."""
-        if not self.tools_dir.exists():
-            console.print(f"[red]Tools directory not found: {self.tools_dir}[/red]")
-            return
+    MAX_ITERATIONS = 15  # Safety limit
 
-        for file_path in self.tools_dir.glob("*.py"):
-            if file_path.name == "__init__.py":
-                continue
-            
-            self._load_tool_from_file(file_path)
+    def __init__(self, mode_loader, memory: Memory, mcp: MCPClient):
+        self.mode_loader = mode_loader
+        self.memory = memory
+        self.mcp = mcp
+        self.gemini = GeminiClient()
+        self.current_mode = None
+        self.current_mode_name = "default"
+        self.workspace_root = Path.home() / ".redmythos" / "workspace"
 
-    def _load_tool_from_file(self, file_path: Path):
-        """Load a tool class from a single file."""
-        module_name = file_path.stem
+        # Initialize Tool Registry (Dynamic Loading)
+        tools_path = Path(__file__).parent.parent / "tools"
+        self.tool_registry = ToolRegistry(str(tools_path), workspace_root=str(self.workspace_root))
+
+        # Extensions loaded dynamically
+        self.extensions: Dict = {}
+
+        # Agentic State (Claude Code inspired)
+        self.task_list: List[str] = []
+        self.completed_tasks: List[str] = []
+
+    def set_mode(self, mode: Dict):
+        """Set the active mode."""
+        self.current_mode = mode
+        self.current_mode_name = mode.get("name", "default")
+        self.gemini.reset_conversation()
+
+        for server in mode.get("mcp_servers", []):
+            self.mcp.register_server(server)
+
+        for ext_name in mode.get("extensions", []):
+            self._load_extension(ext_name)
+
+    def _load_extension(self, name: str):
+        """Load an extension by name."""
+        import importlib.util
+        from pathlib import Path
+
+        ext_path = Path.home() / ".redmythos" / "extensions" / name / "main.py"
+        if ext_path.exists():
+            try:
+                spec = importlib.util.spec_from_file_location(name, ext_path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                if hasattr(module, "Extension"):
+                    self.extensions[name] = module.Extension()
+                    console.print(f"[dim]✅ Extension loaded: {name}[/dim]")
+            except Exception as e:
+                console.print(f"[red]Failed to load extension '{name}': {e}[/red]")
+
+    def list_extensions(self) -> List[str]:
+        """List loaded extensions."""
+        from pathlib import Path
+
+        ext_dir = Path.home() / ".redmythos" / "extensions"
+        if not ext_dir.exists():
+            return []
+        return [d.name for d in ext_dir.iterdir() if d.is_dir()]
+
+    def _get_available_tools(self) -> List[Dict]:
+        """Get tools available in current mode."""
+        mode_tools = {}
+        if self.current_mode:
+            mode_tools = self.current_mode.get("tools", {})
+
+        all_definitions = self.tool_registry.get_definitions()
+        available = []
+
+        for definition in all_definitions:
+            tool_name = definition["name"]
+            status = mode_tools.get(tool_name, "enabled")
+            if status != "disabled":
+                tool_def = definition.copy()
+                if status == "read-only":
+                    tool_def["description"] += " [READ ONLY]"
+                available.append(tool_def)
+
+        # Add MCP tools
+        available.extend(self.mcp.get_available_tools())
+
+        return available
+
+    def _execute_tool(self, tool_name: str, tool_input: Dict) -> str:
+        """Execute a tool and return the result."""
+        # Permission check
+        if self.current_mode:
+            mode_tools = self.current_mode.get("tools", {})
+            status = mode_tools.get(tool_name, "enabled")
+            if status == "disabled":
+                return f"❌ Tool '{tool_name}' is disabled."
+            if status == "read-only" and tool_input.get("action") in ["write", "edit", "delete"]:
+                return f"❌ Tool '{tool_name}' is read-only."
+
+        # Safety confirmation
+        safety = self.current_mode.get("safety", "always") if self.current_mode else "always"
+        should_confirm = (safety == "always") or (
+            safety == "dangerous_only"
+            and (
+                tool_name in ["shell_tool"]
+                or tool_input.get("action") in ["delete", "write", "edit"]
+            )
+        )
+
+        if should_confirm:
+            console.print(
+                Panel(
+                    f"[yellow]Tool:[/yellow] {tool_name}\n[yellow]Input:[/yellow] {json.dumps(tool_input, indent=2)}",
+                    title="⚠️ CONFIRM ACTION",
+                    border_style="yellow",
+                )
+            )
+            if not Confirm.ask("[yellow]Execute?[/yellow]"):
+                return "❌ Cancelled."
+
         try:
-            spec = importlib.util.spec_from_file_location(module_name, file_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            # Find classes that have an 'execute' method and a docstring
-            for name, obj in inspect.getmembers(module, inspect.isclass):
-                if hasattr(obj, 'execute') and obj.__module__ == module_name:
-                    tool_instance = obj()
-                    tool_name = module_name # Default to filename
-                    
-                    # Store instance
-                    self.tools[tool_name] = tool_instance
-                    
-                    # Extract definition for AI
-                    description = obj.__doc__ or f"Tool for {tool_name}"
-                    
-                    # Try to get parameter info from docstring or signature
-                    # For now, we'll keep it simple as the agent is good at inferring
-                    self.tool_definitions.append({
-                        "name": tool_name,
-                        "description": description.strip(),
-                        "parameters": {} # To be refined if needed
-                    })
-                    
-                    # console.print(f"[dim]🔌 Tool registered: {tool_name}[/dim]")
-
+            tool = self.tool_registry.get_tool(tool_name)
+            if tool:
+                return tool.execute(**tool_input)
+            if self.mcp.has_tool(tool_name):
+                return self.mcp.call_tool(tool_name, tool_input)
+            return f"❌ Unknown tool: {tool_name}"
         except Exception as e:
-            console.print(f"[red]Failed to load tool from {file_path.name}: {e}[/red]")
+            return f"❌ Tool error: {str(e)}"
 
-    def get_tool(self, name: str):
-        """Get a tool instance by name."""
-        return self.tools.get(name)
+    def run(self, user_message: str) -> str:
+        """Main agent loop with Research-Strategy-Execution lifecycle."""
+        system_prompt = self.current_mode.get("system_prompt", "") if self.current_mode else ""
+        memory_context = self.memory.get_context()
+        if memory_context:
+            system_prompt += f"\n\nREMEMBER FROM PAST:\n{memory_context}"
 
-    def get_definitions(self) -> List[Dict]:
-        """Get definitions for all registered tools."""
-        return self.tool_definitions
+        # Inject Agentic State
+        state_context = f"\n\nCURRENT TASK LIST:\n{json.dumps(self.task_list, indent=2)}"
+        state_context += f"\nCOMPLETED TASKS:\n{json.dumps(self.completed_tasks, indent=2)}"
+        system_prompt += state_context
 
-    def has_tool(self, name: str) -> bool:
-        """Check if a tool is registered."""
-        return name in self.tools
+        available_tools = self._get_available_tools()
+        iteration = 0
+        tool_results_context = ""
+        current_stage = "RESEARCH"
+
+        while iteration < self.MAX_ITERATIONS:
+            iteration += 1
+            current_message = user_message
+            if tool_results_context:
+                current_message = f"{user_message}\n\nTOOL RESULTS:\n{tool_results_context}"
+
+            response = self.gemini.chat_with_tools(
+                message=current_message,
+                system_prompt=system_prompt,
+                available_tools=available_tools,
+            )
+
+            # Update Internal Task State if provided by the LLM in the response
+            if "new_tasks" in response and response["new_tasks"]:
+                self.task_list.extend(response["new_tasks"])
+            if "completed_task" in response and response["completed_task"]:
+                if response["completed_task"] in self.task_list:
+                    self.task_list.remove(response["completed_task"])
+                    self.completed_tasks.append(response["completed_task"])
+
+            thought = response.get("thought", "")
+            plan = response.get("plan", "")
+            action = response.get("action")
+            action_input = response.get("action_input", {})
+            validation = response.get("validation", "")
+            final_answer = response.get("final_answer")
+
+            if thought:
+                console.print(
+                    Panel(
+                        Markdown(f"**THOUGHT:** {thought}\n\n**PLAN:** {plan}\n\n**VALIDATION:** {validation}"),
+                        title=f"[bold red]💭 {current_stage}[/bold red]",
+                        border_style="red",
+                    )
+                )
+
+            if final_answer is not None:
+                self.memory.add(user_message, final_answer)
+                return final_answer
+
+            if action:
+                # Keep stage names aligned with tool intent.
+                if "search" in action or "read" in str(action_input.get("action", "")):
+                    current_stage = "RESEARCH"
+                elif "write" in str(action_input.get("action", "")) or "shell" in action:
+                    current_stage = "EXECUTION"
+                else:
+                    current_stage = "STRATEGY"
+
+                console.print(f"\n[bold red]⚡ ACTING:[/bold red] {action}")
+                result = self._execute_tool(action, action_input or {})
+                tool_results_context += f"\n[{action}]: {result}\n"
+            else:
+                return response.get("final_answer", "Clarification needed.")
+
+        return "⚠️ Max iterations reached."

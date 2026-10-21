@@ -1,82 +1,82 @@
 """
-REDMYTHOS CLAW 🦀 — Web Tool
-Fetch and summarize content from URLs.
+REDMYTHOS CLAW 🦀 — Search Tool
+Search for patterns in files and directories.
 """
 
-import requests
-from bs4 import BeautifulSoup
+import os
+import re
+from pathlib import Path
 from typing import Optional
 
-class WebTool:
-    """Tool for fetching and processing web content."""
+from core.safety import SafetyPolicy
 
-    def execute(self, action: str, url: str, 
-                selector: Optional[str] = None) -> str:
+
+class SearchTool:
+    """Search files and directories for patterns."""
+
+    def __init__(self, workspace_root: Optional[str] = None):
+        self.policy = SafetyPolicy(workspace_root)
+        self.workspace_root = str(self.policy.workspace_root)
+
+    def execute(self, pattern: str, path: str = ".", file_type: Optional[str] = None, case_sensitive: bool = False, max_results: int = 50) -> str:
         """
-        Execute a web operation.
-        
+        Search for a pattern in files.
+
         Args:
-            action: fetch/extract/headers
-            url: Target URL
-            selector: CSS selector for extraction
-            
-        Returns:
-            Fetched content or summary
+            pattern: Search pattern or regex
+            path: Directory or file to search
+            file_type: Filter by extension (e.g., 'py', 'js')
+            case_sensitive: Case sensitive search
+            max_results: Max results to return
         """
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
+        try:
+            search_root = self.policy.resolve_workspace_path(path)
+        except ValueError as exc:
+            return f"❌ {exc}"
+
+        p = Path(search_root)
+        if not p.exists():
+            return f"❌ Path not found: {search_root}"
+
+        results = []
+        flags = 0 if case_sensitive else re.IGNORECASE
 
         try:
-            if action == "fetch":
-                return self._fetch(url)
-            elif action == "extract":
-                return self._extract(url, selector)
-            elif action == "headers":
-                return self._headers(url)
-            else:
-                return f"❌ Unknown action: {action}. Use: fetch/extract/headers"
-        except Exception as e:
-            return f"❌ Web tool error: {e}"
+            regex = re.compile(pattern, flags)
+        except re.error:
+            regex = re.compile(re.escape(pattern), flags)
 
-    def _fetch(self, url: str) -> str:
-        """Fetch URL and return text content."""
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Remove script and style elements
-        for script in soup(["script", "style"]):
-            script.decompose()
+        if p.is_file():
+            files_to_search = [p]
+        else:
+            files_to_search = []
+            for root, dirs, files in os.walk(search_root):
+                dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ["node_modules", "__pycache__", ".git", "venv", "env"]]
+                for file in files:
+                    file_path = Path(root) / file
+                    if file_type:
+                        if not file.endswith(f".{file_type.lstrip('.')}"):
+                            continue
+                    files_to_search.append(file_path)
 
-        text = soup.get_text(separator='\n')
-        
-        # Clean up whitespace
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = '\n'.join(chunk for chunk in chunks if chunk)
+        for file_path in files_to_search:
+            if len(results) >= max_results:
+                break
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                for line_num, line in enumerate(content.split("\n"), 1):
+                    if regex.search(line):
+                        results.append(f"📄 {file_path}:{line_num}: {line.strip()}")
+                        if len(results) >= max_results:
+                            break
+            except Exception:
+                continue
 
-        return f"🌐 CONTENT FROM {url}:\n\n{text[:5000]}..."
+        if not results:
+            return f"🔍 No matches found for '{pattern}' in {search_root}"
 
-    def _extract(self, url: str, selector: str) -> str:
-        """Extract specific elements using CSS selector."""
-        if not selector:
-            return "❌ Selector required for extract action."
-            
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        elements = soup.select(selector)
-        
-        if not elements:
-            return f"🔍 No elements found for selector: {selector}"
-            
-        results = [el.get_text().strip() for el in elements]
-        return f"🔍 EXTRACTED ({selector}):\n\n" + "\n---\n".join(results[:20])
+        header = f"🔍 Found {len(results)} match(es) for '{pattern}':\n"
+        if len(results) >= max_results:
+            header += f"(Showing first {max_results} results)\n"
 
-    def _headers(self, url: str) -> str:
-        """Get HTTP headers for a URL."""
-        response = requests.head(url, timeout=10)
-        headers = "\n".join([f"{k}: {v}" for k, v in response.headers.items()])
-        return f"📋 HEADERS FOR {url}:\n\n{headers}"
+        return header + "\n".join(results)

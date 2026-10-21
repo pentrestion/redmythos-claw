@@ -1,156 +1,133 @@
 """
-REDMYTHOS CLAW 🦀 — File Tool
-Read, write, edit, delete, list files.
-Safe file operations with proper error handling.
+REDMYTHOS CLAW 🦀 — Shell Tool
+Execute terminal commands safely in a workspace-limited environment.
 """
 
 import os
-import shutil
+import shlex
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
-class FileTool:
-    """File system operations tool."""
+from core.safety import SafetyPolicy
 
-    def execute(self, action: str, path: str, 
-                content: str = "", encoding: str = "utf-8") -> str:
+
+class ShellTool:
+    """Safe shell command execution tool."""
+
+    def __init__(self, workspace_root: Optional[str] = None):
+        self.policy = SafetyPolicy(workspace_root)
+        self.workspace_root = str(self.policy.workspace_root)
+
+    def execute(self, command: str, timeout: int = 30, cwd: Optional[str] = None, env: Optional[dict] = None) -> str:
         """
-        Execute a file operation.
-        
+        Execute a shell command.
+
         Args:
-            action: read/write/edit/delete/list/exists/mkdir
-            path: File or directory path
-            content: Content for write/edit actions
-            encoding: File encoding
-            
+            command: Shell command to execute
+            timeout: Timeout in seconds
+            cwd: Working directory
+            env: Environment variables
+
         Returns:
-            Result string
+            Command output (stdout + stderr)
         """
-        # Expand ~ and environment variables
-        path = os.path.expandvars(os.path.expanduser(path))
-        
         try:
-            if action == "read":
-                return self._read(path, encoding)
-            elif action == "write":
-                return self._write(path, content, encoding)
-            elif action == "edit":
-                return self._edit(path, content, encoding)
-            elif action == "delete":
-                return self._delete(path)
-            elif action == "list":
-                return self._list(path)
-            elif action == "exists":
-                return str(Path(path).exists())
-            elif action == "mkdir":
-                return self._mkdir(path)
-            elif action == "copy":
-                return self._copy(path, content)  # content = destination
-            elif action == "move":
-                return self._move(path, content)  # content = destination
-            else:
-                return f"❌ Unknown action: {action}. Use: read/write/edit/delete/list/exists/mkdir"
-        except PermissionError:
-            return f"❌ Permission denied: {path}"
-        except Exception as e:
-            return f"❌ File operation error: {e}"
+            self.policy.validate_command(command)
+        except ValueError as exc:
+            return f"❌ BLOCKED: {exc}"
 
-    def _read(self, path: str, encoding: str) -> str:
-        """Read file contents."""
-        p = Path(path)
-        if not p.exists():
-            return f"❌ File not found: {path}"
-        if p.is_dir():
-            return f"❌ '{path}' is a directory. Use action='list'"
-        
-        # Check file size (limit 1MB for safety)
-        size = p.stat().st_size
-        if size > 1_000_000:
-            return f"⚠️ File is large ({size/1024:.1f}KB). Reading first 10000 chars only.\n\n" + \
-                   p.read_text(encoding=encoding, errors='replace')[:10000]
-        
-        content = p.read_text(encoding=encoding, errors='replace')
-        lines = content.count('\n')
-        return f"📄 {path} ({lines} lines, {size} bytes):\n\n{content}"
+        target_cwd = self.workspace_root if not cwd else self.policy.resolve_workspace_path(cwd)
 
-    def _write(self, path: str, content: str, encoding: str) -> str:
-        """Write content to file (creates if not exists)."""
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        
-        existed = p.exists()
-        p.write_text(content, encoding=encoding)
-        
-        action = "Updated" if existed else "Created"
-        return f"✅ {action}: {path} ({len(content)} chars)"
+        safe_env = {**os.environ, **(env or {})}
+        safe_env.setdefault("HOME", str(Path.home()))
+        safe_env.setdefault("PATH", os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"))
 
-    def _edit(self, path: str, content: str, encoding: str) -> str:
-        """Edit/append to existing file."""
-        p = Path(path)
-        if not p.exists():
-            # Create it
-            return self._write(path, content, encoding)
-        
-        # Append to existing
-        existing = p.read_text(encoding=encoding, errors='replace')
-        p.write_text(existing + "\n" + content, encoding=encoding)
-        return f"✅ Edited: {path}"
+        try:
+            cmd_parts = shlex.split(command, posix=True)
+            result = subprocess.run(
+                cmd_parts,
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=target_cwd,
+                env=safe_env,
+                errors="replace",
+            )
 
-    def _delete(self, path: str) -> str:
-        """Delete file or directory."""
-        p = Path(path)
-        if not p.exists():
-            return f"❌ Not found: {path}"
-        
-        if p.is_file():
-            p.unlink()
-            return f"✅ Deleted file: {path}"
-        elif p.is_dir():
-            shutil.rmtree(path)
-            return f"✅ Deleted directory: {path}"
+            output = []
+            if result.stdout.strip():
+                output.append(result.stdout.strip())
+            if result.stderr.strip():
+                output.append(f"STDERR:\n{result.stderr.strip()}")
+            if result.returncode != 0:
+                output.append(f"Exit code: {result.returncode}")
 
-    def _list(self, path: str) -> str:
-        """List directory contents."""
-        p = Path(path) if path else Path.cwd()
-        
-        if not p.exists():
-            return f"❌ Directory not found: {path}"
-        if not p.is_dir():
-            return f"❌ '{path}' is a file, not a directory"
-        
-        items = sorted(p.iterdir(), key=lambda x: (x.is_file(), x.name))
-        
-        if not items:
-            return f"📁 {path} (empty)"
-        
-        result = [f"📁 {p.absolute()}:"]
-        for item in items[:100]:  # Limit to 100 items
-            if item.is_dir():
-                result.append(f"  📂 {item.name}/")
-            else:
-                size = item.stat().st_size
-                size_str = f"{size}B" if size < 1024 else f"{size//1024}KB"
-                result.append(f"  📄 {item.name} ({size_str})")
-        
-        if len(items) > 100:
-            result.append(f"  ... and {len(items)-100} more items")
-        
-        return "\n".join(result)
+            if not output:
+                return f"✅ Command completed (exit code: {result.returncode})"
+            return "\n".join(output)
 
-    def _mkdir(self, path: str) -> str:
-        """Create directory."""
-        Path(path).mkdir(parents=True, exist_ok=True)
-        return f"✅ Created directory: {path}"
+        except subprocess.TimeoutExpired:
+            return f"⏰ Command timed out after {timeout}s: {command}"
+        except FileNotFoundError as exc:
+            return f"❌ Command not found: {exc}"
+        except Exception as exc:
+            return f"❌ Shell error: {exc}"
 
-    def _copy(self, src: str, dst: str) -> str:
-        """Copy file or directory."""
-        if Path(src).is_dir():
-            shutil.copytree(src, dst)
-        else:
-            shutil.copy2(src, dst)
-        return f"✅ Copied: {src} → {dst}"
+    def run_script(self, script_content: str, language: str = "bash", timeout: int = 60) -> str:
+        """
+        Run a script by writing to a temporary workspace file and executing it.
 
-    def _move(self, src: str, dst: str) -> str:
-        """Move file or directory."""
-        shutil.move(src, dst)
-        return f"✅ Moved: {src} → {dst}"
+        Args:
+            script_content: Script code
+            language: bash/python/node/ruby/go/rust
+            timeout: Timeout in seconds
+        """
+        extensions = {
+            "bash": ".sh",
+            "python": ".py",
+            "python3": ".py",
+            "node": ".js",
+            "javascript": ".js",
+            "ruby": ".rb",
+            "perl": ".pl",
+            "php": ".php",
+        }
+
+        interpreters = {
+            "bash": "bash",
+            "python": "python3",
+            "python3": "python3",
+            "node": "node",
+            "javascript": "node",
+            "ruby": "ruby",
+            "perl": "perl",
+            "php": "php",
+        }
+
+        normalized_language = language.lower()
+        if normalized_language not in interpreters:
+            return f"❌ Script language '{language}' is not allowed"
+
+        ext = extensions[normalized_language]
+        interpreter = interpreters[normalized_language]
+
+        storage_dir = Path(self.workspace_root) / ".tmp"
+        storage_dir.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=ext,
+            dir=str(storage_dir),
+            delete=False,
+            prefix="redmythos_",
+        ) as handle:
+            handle.write(script_content)
+            temp_path = handle.name
+
+        try:
+            return self.execute(f"{interpreter} {shlex.quote(temp_path)}", timeout=timeout, cwd=self.workspace_root)
+        finally:
+            Path(temp_path).unlink(missing_ok=True)

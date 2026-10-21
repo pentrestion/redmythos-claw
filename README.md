@@ -2,47 +2,38 @@
 
 Open-source AI coding agent for Termux and Android — a lightweight, Gemini-powered alternative to Claude Code for mobile-first software workflows.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-red.svg)](LICENSE)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-red.svg)](https://python.org)
-[![Termux](https://img.shields.io/badge/Termux-Optimized-black.svg)](https://termux.dev)
-[![GitHub Repo](https://img.shields.io/badge/GitHub-Repo-red?logo=github)](https://github.com/pentrestion/redmythos-claw)
+This repository has been hardened for safer local execution. The main changes include:
 
-REDMYTHOS CLAW is an autonomous AI agent framework built for Android and Termux. It helps you automate coding tasks, terminal operations, file manipulation, search, web lookup, and task execution using Google Gemini from your phone or terminal.
+- workspace confinement for file and shell actions
+- command allowlisting and removal of shell metacharacters
+- public-only outbound URL validation to prevent SSRF-style abuse
+- restricted tool auto-loading to approved modules only
+- secure default workspace creation under `~/.redmythos/workspace`
 
-This project is designed for developers, security researchers, and power users who want a mobile-first AI assistant that can reason through tasks, plan steps, and act with tool access.
+## Security posture
 
-## Why this project exists
+The agent is now safer for prototype/local use, but it is still not a production-grade sandbox. For cloud or multi-user deployment, use:
 
-Most AI tools are built around a desktop workflow. REDMYTHOS CLAW is built for the reality of mobile development and terminal-first environments:
+- isolated execution containers or VMs
+- authenticated tool execution API layers
+- project-scoped workspaces with RBAC
+- secret management via environment variables or a key manager
+- audit logging and session tracing
 
-- Run an AI agent from Termux on Android
-- Automate research, planning, and execution loops
-- Use Gemini to work with files, commands, and web tools
-- Extend the system with custom tools, skills, and MCP support
-- Keep the workflow lightweight and open source
+## Cloud / Claude Code style architecture
 
-## Key features
+A strong architecture for turning this prototype into a cloud-native coding agent looks like:
 
-- Termux AI agent for Android
-- Gemini-powered autonomous reasoning loop
-- Claude Code-style workflow for coding and task execution
-- Dynamic tool loading from the `tools/` directory
-- Markdown skill system via `skills/`
-- MCP server support for external integrations
-- Built for research, coding, automation, and security workflows
-- Lightweight Python architecture
+1. Client app or CLI
+2. Backend orchestration service
+3. Workspace manager per project
+4. Sandbox runner (Docker/Kubernetes)
+5. Tool registry and policy engine
+6. Memory + state database
+7. LLM orchestration and event streaming
+8. PR/commit automation and CI integration
 
-## How it works
-
-REDMYTHOS CLAW follows a structured reasoning lifecycle:
-
-1. RESEARCH — inspect files, environment, and external sources
-2. STRATEGY — turn the goal into a plan
-3. PLAN — break the work into actionable tasks
-4. ACT — execute tools and commands
-5. VALIDATE — verify the result before finishing
-
-This makes it useful for more than chat. It can act as a reasoning partner for development tasks and automation.
+This approach keeps the local agent UX while moving risky execution into an isolated environment.
 
 ## Quick start
 
@@ -50,112 +41,17 @@ This makes it useful for more than chat. It can act as a reasoning partner for d
 git clone https://github.com/pentrestion/redmythos-claw
 cd redmythos-claw
 bash install.sh
-redmythosclaw
+python3 main.py
 ```
 
-## Requirements
+## Notes
 
-- Python 3.8+
-- Termux or Linux/macOS environment
-- Google Gemini API access
-- Git
-
-## Configuration
-
-On first run, the project creates a config under `~/.redmythos/` and sets up:
-
-- `~/.redmythos/config.json`
-- `~/.redmythos/modes/`
-- `~/.redmythos/extensions/`
-- `~/.redmythos/mcp/`
-- `~/.redmythos/memory/`
-
-Set your Gemini API key in the generated config file before using the agent.
-
-## Available commands
-
-| Command | Description |
-|---------|-------------|
-| `/mode <name>` | Switch agent mode |
-| `/modes` | List all available modes |
-| `/mcp` | Manage MCP server configuration |
-| `/memory` | View or clear session memory |
-| `/help` | Show command list |
-| `/exit` | Exit the app |
-
-## Customization
-
-### Add new tools
-
-Drop any Python file into `tools/` with an `execute()` method. The registry auto-discovers it.
-
-### Add new skills
-
-Place `.md` or `.txt` files into `skills/` to give the agent domain-specific knowledge.
-
-### MCP support
-
-REDMYTHOS CLAW supports MCP servers for extending the agent with external tools and resources.
-
-## Project structure
-
-```text
-.
-├── README.md
-├── LICENSE
-├── install.sh
-├── main.py
-├── requirements.txt
-├── config/
-│   └── setup.py
-├── core/
-│   ├── agent.py
-│   ├── gemini.py
-│   ├── mcp_client.py
-│   ├── memory.py
-│   ├── mode_loader.py
-│   └── tool_registry.py
-├── modes/
-├── skills/
-├── tools/
-│   ├── file_tool.py
-│   ├── fix_tool.py
-│   ├── search_tool.py
-│   ├── shell_tool.py
-│   └── web_tool.py
-└── .gitignore
-```
-
-## Example use cases
-
-- Run coding tasks from your Android device
-- Use Gemini to inspect code and plan fixes
-- Automate repetitive terminal workflows
-- Research and validate security issues in a controlled environment
-- Build custom mobile automation workflows with agentic reasoning
-
-## Security
-
-The project includes safety-oriented behavior. Dangerous actions may require confirmation depending on your active mode. Review the mode configuration and use the tool responsibly.
+The project keeps a local workspace at `~/.redmythos/workspace` by default, and file or shell operations cannot escape that directory unless explicitly rewritten for a different policy.
 
 ## License
 
-MIT License
-
-## Built for
-
-- Termux users
-- Android developers
-- AI automation enthusiasts
-- security researchers
-- people exploring Gemini-powered autonomous agents
-
-## Keywords
-
-Termux AI, Android Agent, Gemini API, Autonomous Agent, Claude Code Alternative, AI Coding Agent, Mobile Automation, Open Source AI Tool, Termux Developer Tools, Python AI Agent
-
-## Author
-
-Built by Mir mahmood khan
+MIT
 
 ---
+
+Built by Mir mahmood khan
