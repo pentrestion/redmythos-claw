@@ -159,10 +159,3 @@ Termux AI, Android Agent, Gemini API, Autonomous Agent, Claude Code Alternative,
 Built by Mir mahmood khan
 
 ---
-
-If you want, I can also help you with:
-
-- a stronger repo description for GitHub
-- a better project tagline for SEO
-- a polished landing page / docs page
-- a one-page homepage for GitHub Pages
